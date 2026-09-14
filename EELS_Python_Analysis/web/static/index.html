@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EELS 谱峰分析</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">本地分析服务</p>
+        <h1>EELS 谱峰分析</h1>
+      </div>
+      <div class="dataset-meta">
+        <span id="dataset-name">正在读取数据</span>
+        <span id="dataset-shape"></span>
+      </div>
+      <button id="import-data" class="secondary-button action-button" type="button">导入数据</button>
+    </header>
+
+    <main>
+      <section class="workspace" aria-label="EELS 交互分析区">
+        <article class="tool-pane map-pane">
+          <header class="pane-header">
+            <div>
+              <h2 id="map-title">信号图</h2>
+              <p id="map-window">积分能量范围</p>
+            </div>
+            <div id="roi-readout" class="roi-readout"></div>
+          </header>
+          <div class="map-controls">
+            <label for="map-kind">参考底图</label>
+            <select id="map-kind" aria-label="参考底图">
+              <option value="signal">当前能窗积分图</option>
+              <option value="total_counts">EELS 总计数（非 HAADF）</option>
+              <option value="band_27_32">27–32 meV 参考图</option>
+              <option value="spectral_contribution">Si/Ge 参考谱贡献图</option>
+            </select>
+            <label class="candidate-toggle"><input id="show-centers" type="checkbox" checked>候选中心</label>
+          </div>
+          <div id="candidate-readout" class="candidate-readout" aria-live="polite"></div>
+          <div class="canvas-shell">
+            <canvas id="map-canvas" tabindex="0" aria-label="EELS 信号图。拖动选框内部移动区域，拖动边角调整大小，在框外拖动重新选区，按 Esc 取消本次调整。"></canvas>
+            <div class="map-scale">
+              <span id="map-max"></span>
+              <i></i>
+              <span id="map-min"></span>
+            </div>
+          </div>
+          <p id="reference-note" class="reference-note" role="status">切换底图仅改变显示，保留三个区域选框。</p>
+          <section class="region-fit-panel" aria-label="衬度拟合选区">
+            <label class="candidate-toggle"><input id="region-fit-enabled" type="checkbox">启用衬度拟合选区</label>
+            <div id="region-fit-controls" hidden>
+              <div class="region-fit-grid">
+                <label>拟合参考<select id="region-fit-source"><option value="total_counts">EELS 总计数（非 HAADF）</option><option value="spectral_contribution">Si/Ge 参考谱贡献</option></select></label>
+                <label>应用模型<select id="region-fit-model"><option value="erf">erf（误差函数）</option><option value="logistic">logistic</option></select></label>
+                <label>Si 体区达到平台 (%)<input id="region-fit-si" type="number" value="99" min="50.01" max="99.99" step="0.01"></label>
+                <label>Ge 体区达到平台 (%)<input id="region-fit-ge" type="number" value="99" min="50.01" max="99.99" step="0.01"></label>
+                <label>界面左界 C (%)<input id="region-fit-low" type="number" value="10" min="0.01" max="49.99" step="0.01"></label>
+                <label>界面右界 C (%)<input id="region-fit-high" type="number" value="90" min="50.01" max="99.99" step="0.01"></label>
+              </div>
+              <div class="region-fit-actions">
+                <label class="candidate-toggle"><input id="region-fit-full-y" type="checkbox" checked>应用时纵向取满</label>
+                <label class="candidate-toggle"><input id="region-fit-show" type="checkbox" checked>显示拟合边界</label>
+                <button id="region-fit-run" type="button">拟合预览</button>
+                <button id="region-fit-cancel" type="button" disabled>取消拟合</button>
+                <button id="region-fit-apply" class="primary-button" type="button" disabled>应用到选框</button>
+              </div>
+              <p class="region-fit-help">沿全 y 平均，按 Si 在左、Ge 在右生成选区。默认 C≤1% / 10%–90% / C≥99%，中间间隔不归入三区域。百分比表示衬度，不是元素含量；预览不改选框。</p>
+              <div id="region-fit-result" hidden>
+                <div id="region-fit-profile">
+                  <canvas id="region-fit-canvas" aria-label="一维归一化衬度与拟合曲线"></canvas>
+                  <p class="region-fit-help">点：沿 y 平均的归一化衬度；线：当前模型拟合。</p>
+                </div>
+                <div class="region-fit-table-wrap"><table class="region-fit-table"><thead><tr><th>模型</th><th>中心 (nm)</th><th>10–90% 宽度 (nm)</th><th>RMSE</th><th>R²</th></tr></thead><tbody id="region-fit-models"></tbody></table></div>
+                <p id="region-fit-boundaries" class="region-fit-help"></p>
+              </div>
+              <p id="region-fit-status" role="status" aria-live="polite">设置比例后点击拟合预览；应用后仍可手动调整选框。宽度为衬度过渡宽度。</p>
+            </div>
+          </section>
+        </article>
+
+        <article class="tool-pane spectrum-pane">
+          <header class="pane-header">
+            <div>
+              <h2>选区平均谱</h2>
+              <p id="fit-caption">选择空间区域后显示其平均谱</p>
+            </div>
+            <div id="fit-state" class="fit-state">未分析</div>
+          </header>
+          <div class="canvas-shell spectrum-shell">
+            <canvas id="spectrum-canvas" aria-label="EELS 平均谱与分析曲线"></canvas>
+            <div class="spectrum-legend" role="group" aria-label="曲线显示">
+              <button id="toggle-raw" class="legend-toggle raw" type="button" aria-pressed="true">
+                <span class="legend-swatch"></span>原始
+              </button>
+              <button id="toggle-pca" class="legend-toggle pca" type="button" aria-pressed="true">
+                <span class="legend-swatch"></span>PCA
+              </button>
+              <button id="toggle-fit" class="legend-toggle fit" type="button" aria-pressed="true">
+                <span class="legend-swatch"></span>拟合
+              </button>
+              <button id="toggle-baseline" class="legend-toggle baseline" type="button" aria-pressed="true">
+                <span class="legend-swatch"></span>背景
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="controls-band" aria-label="分析控制">
+        <fieldset class="control-group region-group">
+          <legend>当前区域</legend>
+          <div class="segmented" role="radiogroup" aria-label="当前区域">
+            <label class="segment si">
+              <input type="radio" name="region" value="Si" checked>
+              <span>Si</span>
+            </label>
+            <label class="segment interface">
+              <input type="radio" name="region" value="Interface">
+              <span>界面</span>
+            </label>
+            <label class="segment ge">
+              <input type="radio" name="region" value="Ge">
+              <span>Ge</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="control-group energy-group">
+          <legend>分析能量范围 (meV)</legend>
+          <label>
+            <span>起始</span>
+            <input id="fit-min" type="number" step="0.1" value="0">
+          </label>
+          <label>
+            <span>终止</span>
+            <input id="fit-max" type="number" step="0.1" value="120">
+          </label>
+          <button id="update-map" class="secondary-button" type="button">更新信号图</button>
+        </fieldset>
+
+        <fieldset class="control-group fit-group">
+          <legend>分析方法</legend>
+          <label class="fit-mode-label">
+            <span>分析方式</span>
+            <select id="fit-mode" aria-label="分析方式">
+              <option value="pca" selected>纯 PCA 峰分析</option>
+              <option value="auto">高斯自动寻优</option>
+              <option value="manual">高斯手动约束</option>
+            </select>
+          </label>
+          <div id="pca-fields" class="fit-fields">
+            <label>
+              <span>主成分数</span>
+              <input id="pca-components" type="number" min="1" max="64" step="1" value="5">
+            </label>
+            <label>
+              <span>目标峰数</span>
+              <input id="pca-peak-count" type="number" min="1" max="16" step="1" value="3">
+            </label>
+            <label>
+              <span>最小峰距 (meV)</span>
+              <input id="pca-min-distance" type="number" min="0.01" step="0.1" value="5">
+            </label>
+            <label>
+              <span>最小突出度 (%)</span>
+              <input id="pca-min-prominence" type="number" min="0" max="99.99" step="0.1" value="0.5">
+            </label>
+          </div>
+          <div id="auto-fields" class="fit-fields is-hidden">
+            <label>
+              <span>峰数</span>
+              <input id="peak-count" type="number" min="1" max="16" step="1" value="4">
+            </label>
+            <label>
+              <span>寻优起点数</span>
+              <input id="search-starts" type="number" min="1" max="256" step="1" value="48">
+            </label>
+            <label>
+              <span>FWHM 下限 (meV)</span>
+              <input id="auto-fwhm-lower" type="number" min="0.01" step="0.1" value="5">
+            </label>
+            <label>
+              <span>FWHM 上限 (meV)</span>
+              <input id="auto-fwhm-upper" type="number" min="0.01" step="0.1" value="40">
+            </label>
+            <label class="check-label">
+              <input id="baseline" type="checkbox" checked>
+              <span>线性背景</span>
+            </label>
+          </div>
+          <div id="manual-fields" class="fit-fields is-hidden">
+            <label>
+              <span>初始峰位 (meV)</span>
+              <input id="centers" type="text" value="20, 50, 75, 100">
+            </label>
+            <label>
+              <span>峰位下限 (meV)</span>
+              <input id="center-lower" type="text" value="10, 40, 65, 90">
+            </label>
+            <label>
+              <span>峰位上限 (meV)</span>
+              <input id="center-upper" type="text" value="30, 60, 85, 110">
+            </label>
+            <label>
+              <span>FWHM 下限 (meV)</span>
+              <input id="fwhm-lower" type="text" value="5">
+            </label>
+            <label>
+              <span>FWHM 上限 (meV)</span>
+              <input id="fwhm-upper" type="text" value="40">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="control-group bootstrap-group">
+          <legend id="bootstrap-title">空间块自助法</legend>
+          <label>
+            <span>重采样次数</span>
+            <input id="samples" type="number" min="2" step="1" value="500">
+          </label>
+          <label>
+            <span id="block-size-label">空间块边长 (px)</span>
+            <input id="block-size" type="text" value="2">
+          </label>
+          <label class="workers-label">并行任务数
+            <select id="bootstrap-workers">
+              <option value="0">自动</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="12">12</option>
+              <option value="16">16</option>
+            </select>
+          </label>
+          <div class="progress-line">
+            <progress id="progress" value="0" max="1"></progress>
+            <span id="progress-label">空闲</span>
+          </div>
+        </fieldset>
+
+        <div class="actions" aria-label="分析操作">
+          <button id="fit-active" class="primary-button action-button" type="button">分析当前区域</button>
+          <button id="fit-all" class="secondary-button action-button" type="button">分析全部区域</button>
+          <button id="bootstrap-active" class="primary-button action-button" type="button">评估当前不确定度</button>
+          <button id="bootstrap-all" class="secondary-button action-button" type="button">评估全部不确定度</button>
+          <button id="download-results" class="secondary-button action-button" type="button">导出结果（JSON）</button>
+        </div>
+      </section>
+
+      <section class="results-section" aria-label="峰参数结果">
+        <header class="results-header">
+          <div>
+            <h2>峰参数</h2>
+            <p id="result-note">完成分析后将在此显示参数。</p>
+          </div>
+          <div id="status" class="status" role="status" aria-live="polite">就绪</div>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>区域</th>
+                <th>峰</th>
+                <th>中心 (meV)</th>
+                <th>峰位 95% 区间 (meV)</th>
+                <th id="width-heading">半突出度宽度 (meV)</th>
+                <th>宽度 95% 区间 (meV)</th>
+                <th id="measure-heading">突出度</th>
+              </tr>
+            </thead>
+            <tbody id="peak-table">
+              <tr><td colspan="7">尚无分析结果。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/roi_geometry.js"></script>
+  <script src="/static/region_fit.js"></script>
+  <script src="/static/app.js"></script>
+  <dialog id="import-dialog" aria-labelledby="import-title">
+    <form id="import-form">
+      <h2 id="import-title">导入数据</h2>
+      <label>本地文件（MAT / HDF5）
+        <input id="import-file" type="file" accept=".mat,.h5,.hdf5">
+      </label>
+      <label>或填写本地绝对路径
+        <input id="import-path" type="text" placeholder="C:\数据目录\result.mat" autocomplete="off">
+      </label>
+      <p id="import-message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="import-cancel" type="button">取消</button>
+        <button id="import-submit" class="primary-button" type="submit">开始导入</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
