@@ -1330,7 +1330,8 @@ async function loadDatasetInfo({ preserveSettings = false } = {}) {
     byId("dataset-import-note").hidden = !preparation;
     byId("dataset-import-note").textContent = preparation
       ? "ZEST · " + preparation.signal_label + " · " + (preparation.options.energy_axis === "raw" ? "原能量轴" : "校正能量轴 / 线性插值") +
-        " · 有效像素 " + preparation.valid_pixels + "，缺失 " + preparation.missing_pixels : "";
+        " · 有效像素 " + preparation.valid_pixels + "，缺失 " + preparation.missing_pixels +
+        " · " + (preparation.total_counts_status === "available" ? "已保留原始 EELS 总计数" : "未提供原始 EELS 总计数") : "";
     // Dataset-derived defaults apply only on first load, never on file import.
     if (preserveSettings) return;
     if (state.info.zlp_fwhm_meV != null && Number.isFinite(Number(state.info.zlp_fwhm_meV))) {

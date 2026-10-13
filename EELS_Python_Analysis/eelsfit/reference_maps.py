@@ -138,7 +138,7 @@ def build_reference_maps(data: EELSData):
         counts = None
     add("total_counts","EELS 总计数图",counts,
         reason=data.attributes.get("total_counts_error", "此 HDF5 未保存总计数图；导入对应 MAT 后可读取 info.totint。"),
-        palette="gray",description="MAT 保存的 EELS 总计数衬度（非 HAADF）",center=True)
+        palette="gray",description="源文件保留的 EELS.info.totint 总计数衬度（非 HAADF）",center=True)
     energy = data.energy_meV
     mask = (energy>=27)&(energy<=32)
     if energy[0]<=27 and energy[-1]>=32 and mask.sum()>=2:

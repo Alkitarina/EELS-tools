@@ -1,6 +1,6 @@
 # EELS tools
 
-当前分析网页版本：**1.0.0**（[更新记录](EELS_Python_Analysis/CHANGELOG.md)）。
+当前分析网页版本：**1.1.0**（[更新记录](EELS_Python_Analysis/CHANGELOG.md)）。
 
 用于 Si／界面／Ge／位错核区域的本地 EELS 分析与 PCA 结果绘图。包含中文网页 UI、MAT→HDF5 转换、EELS-ZEST ZIP 导入、峰分析、不确定度计算、多变量界面残差分析，以及复现、绘图和参数重算工作流。
 
@@ -25,6 +25,8 @@ py -3.12 -m venv .\EELS_Python_Analysis\.venv
 ```
 
 打开 [http://127.0.0.1:8768](http://127.0.0.1:8768)。首次启动为空白界面，在网页中导入 H5、可信的 Toolbox MAT、已保存空间标定的 EELS-ZEST ZIP，或导入流程 JSON 继续分析。服务只监听本机；端口被其他服务占用时会明确提示，不自动改用其他端口。同项目、同版本的已有服务会复用，保留当前数据与结果。
+
+完成环境安装后，日常可直接双击 `EELS_Python_Analysis/打开分析界面.vbs`。启动前不需要选择或准备数据文件；打开网页后再导入。
 
 停止前先导出结果，再按实际端口运行：
 

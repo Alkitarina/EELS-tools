@@ -119,7 +119,7 @@ try {
     $url = "http://127.0.0.1:$selectedPort"
     Write-Output "[start_web] Ready: $url"
     if ($health.source) { Write-Output "[start_web] Data: $($health.source)" }
-    else { Write-Output "[start_web] No data loaded. Import MAT/H5 or workflow JSON in the browser." }
+    else { Write-Output "[start_web] No data loaded. Import MAT/H5, EELS-ZEST ZIP or workflow JSON in the browser." }
     Write-Output "[start_web] Server PID: $($health.pid)"
     if ($stdoutLog) { Write-Output "[start_web] Logs: $stdoutLog, $stderrLog" }
     Write-Output "[start_web] The server stays running after this terminal closes."

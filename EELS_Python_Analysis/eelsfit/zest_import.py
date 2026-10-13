@@ -151,6 +151,67 @@ class ZestCube:
     x_nm: np.ndarray | None
     y_nm: np.ndarray | None
     provenance: dict
+    total_counts: np.ndarray | None = None
+
+
+def _counts_version(value, label):
+    version = np.asarray(value)
+    if version.shape != () or version.dtype.kind not in "iu" or version.item() != 1:
+        raise ValueError(f"{label}：不支持的总计数 schema_version。")
+
+
+def _source_count(info, label):
+    if not isinstance(info, dict):
+        raise ValueError(f"{label}：count_info 必须是对象。")
+    _counts_version(info.get("schema_version"), label)
+    value = info.get("source_totint")
+    if value is None:
+        return np.nan
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value):
+        raise ValueError(f"{label}：source_totint 必须是有限实数或 null。")
+    return float(value)
+
+
+class _SourceCounts:
+    """Merge only retained info.totint; fit-window sums are a different quantity."""
+
+    def __init__(self, shape, maps):
+        self.values = np.full(shape, np.nan)
+        self.seen = np.zeros(shape, dtype=bool)
+        self.sources = set()
+        if "counts_schema_version" in maps:
+            _counts_version(maps["counts_schema_version"], "maps.npz")
+        if "counts_source_totint" in maps:
+            _counts_version(maps.get("counts_schema_version"), "maps.npz")
+            values = maps["counts_source_totint"]
+            if values.shape != shape or values.dtype.kind not in "fiu" or np.isinf(values).any():
+                raise ValueError("ZEST counts_source_totint 必须是与空间尺寸一致的 [y,x] 实数图（允许 NaN 缺失）。")
+            self.values[:] = values
+            self.seen[:] = True
+            self.sources.add("maps.npz:counts_source_totint")
+
+    def add(self, position, info, source):
+        value = _source_count(info, source)
+        # Absence is not a declaration of a null value in an older producer.
+        if "source_totint" not in info:
+            return
+        position = tuple(position)
+        previous = self.values[position]
+        if self.seen[position] and not (
+                (np.isnan(previous) and np.isnan(value)) or
+                np.isclose(previous, value, rtol=1e-12, atol=0)):
+            raise ValueError("ZEST 原始总计数的重复元数据互相矛盾。")
+        self.values[position] = value
+        self.seen[position] = True
+        self.sources.add(source)
+
+    def finish(self, coords, entries):
+        exported = np.zeros(self.values.shape, dtype=bool)
+        for index in entries:
+            exported[tuple(coords[index])] = True
+        if np.isfinite(self.values[~exported]).any():
+            raise ValueError("ZEST 总计数图含未导出像素的值，与像素清单不一致。")
+        return self.values if np.isfinite(self.values).any() else None
 
 
 def read_zest_archive(source, options=None, progress=None):
@@ -185,6 +246,7 @@ def read_zest_archive(source, options=None, progress=None):
             shape = maps[map_name].shape
             if not all(shape) or np.any(coords >= np.asarray(shape)):
                 raise ValueError("ZEST 像素坐标超出 [y,x] 图的范围。")
+            counts = _SourceCounts(shape, maps)
             x_nm, y_nm = _spatial_axes(maps, shape)
             spatial_origin = {}
             spatial_positions = None
@@ -239,6 +301,26 @@ def read_zest_archive(source, options=None, progress=None):
         if saved_coords is not None and (len(saved_coords) != len(entries)
                 or set(map(tuple, coords[list(entries)])) != set(map(tuple, saved_coords))):
             raise ValueError("ZEST 像素文件与 maps.coords 清单不一致。")
+        if prefix + "counts.json" in names:
+            document = _json(_read(archive, prefix + "counts.json", MAX_JSON_BYTES))
+            if not isinstance(document, dict):
+                raise ValueError("ZEST counts.json 必须是对象。")
+            _counts_version(document.get("schema_version"), "counts.json")
+            if document.get("shape") != list(shape) or not isinstance(document.get("pixels"), list):
+                raise ValueError("ZEST counts.json 空间尺寸或像素清单无效。")
+            row_indices = set()
+            for row in document["pixels"]:
+                index = row.get("result_index") if isinstance(row, dict) else None
+                if type(index) is not int or index not in entries or index in row_indices:
+                    raise ValueError("ZEST counts.json 像素索引无效或重复。")
+                y, x = coords[index]
+                if (row.get("pixel_y") != y + 1 or row.get("pixel_x") != x + 1
+                        or row.get("file") != entries[index][len(prefix):]):
+                    raise ValueError("ZEST counts.json 像素坐标或文件名与清单不一致。")
+                counts.add((y, x), row.get("count_info"), "counts.json:source_totint")
+                row_indices.add(index)
+            if row_indices != set(entries):
+                raise ValueError("ZEST counts.json 像素清单不完整。")
         spectra, axes, used, failures, software_versions = [], [], [], [], set()
         for done, (index, name) in enumerate(sorted(entries.items()), 1):
             compressed = _read(archive, name, MAX_JSON_BYTES)
@@ -251,6 +333,8 @@ def read_zest_archive(source, options=None, progress=None):
             for key, expected in (("pixel_y", int(y) + 1), ("pixel_x", int(x) + 1)):
                 if key in pixel and pixel[key] != expected:
                     raise ValueError(f"{name} 的 {key} 与坐标清单不一致。")
+            if "count_info" in pixel:
+                counts.add((y, x), pixel["count_info"], "pixels:count_info.source_totint")
             if pixel.get("error"):
                 failures.append({"index": index, "reason": str(pixel["error"])[:300]})
                 continue
@@ -285,6 +369,7 @@ def read_zest_archive(source, options=None, progress=None):
                 progress(done, len(entries))
         if not used:
             raise ValueError("ZIP 中没有成功保存的有限谱线。")
+        total_counts = counts.finish(coords, entries)
         energy = axes[0]
         if options["energy_axis"] == "corrected":
             lower, upper = max(a[0] for a in axes), min(a[-1] for a in axes)
@@ -299,9 +384,13 @@ def read_zest_archive(source, options=None, progress=None):
         if x_nm is not None:
             if x_nm.size > 1 and x_nm[1] < x_nm[0]:
                 x_nm, cube = x_nm[::-1].copy(), cube[:,::-1,:].copy()
+                if total_counts is not None:
+                    total_counts = total_counts[:, ::-1].copy()
                 reversals.append("x")
             if y_nm.size > 1 and y_nm[1] < y_nm[0]:
                 y_nm, cube = y_nm[::-1].copy(), cube[::-1,:,:].copy()
+                if total_counts is not None:
+                    total_counts = total_counts[::-1, :].copy()
                 reversals.append("y")
         provenance = dict(version=VERSION, source_zip=str(source), job_id=job.get("id"),
             dataset_id=job.get("dataset_id"), job_status=job.get("status"), options=options,
@@ -316,8 +405,12 @@ def read_zest_archive(source, options=None, progress=None):
             valid_pixels=len(used), missing_pixels=int(np.prod(shape)) - len(used),
             requested_pixels=len(coords), saved_pixel_files=len(entries), failed_pixels=failures,
             zest_software_versions=sorted(software_versions),
-            total_counts_status="missing_in_input", refit=False)
-        return ZestCube(cube, energy, x_nm, y_nm, provenance)
+            total_counts_status="available" if total_counts is not None else "missing_in_input",
+            total_counts_source_field="EELS.info.totint" if total_counts is not None else None,
+            total_counts_metadata_sources=sorted(counts.sources),
+            total_counts_valid_pixels=int(np.isfinite(total_counts).sum()) if total_counts is not None else 0,
+            refit=False)
+        return ZestCube(cube, energy, x_nm, y_nm, provenance, total_counts)
 
 
 def prepare_zest_import(source, destination, options=None, progress=None):
@@ -334,7 +427,7 @@ def prepare_zest_import(source, destination, options=None, progress=None):
         )
     data = EELSData(result.intensity, result.x_nm, result.y_nm, result.energy_meV,
                     Path(source).resolve(), {"original_source": str(Path(source).resolve()),
-                    "zest_import": result.provenance})
+                    "zest_import": result.provenance}, total_counts=result.total_counts)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + ".writing")
     if temporary.exists():

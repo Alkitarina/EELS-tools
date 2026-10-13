@@ -1,6 +1,6 @@
 # EELS Python Analysis
 
-当前版本：**1.0.0**。界面右上角显示版本号，`/health` 和 `/api/info` 的
+当前版本：**1.1.0**。界面右上角显示版本号，`/health` 和 `/api/info` 的
 `app_version` 来自 `eelsfit/version.py`。更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 This standalone project exports an 'EELS' MATLAB object to HDF5 and provides
@@ -70,7 +70,9 @@ changes ports. The URL, server PID, logs and stop command are printed.
 
 ### 日常启动
 
-启动入口改为 `start_web.ps1`，方式与 grading web service 一致，不再使用 BAT。在项目目录的 PowerShell 中运行：
+双击 **`打开分析界面.vbs`** 即可启动，随后在空白网页中点击“导入数据”，选择 H5、MAT 或 EELS-ZEST ZIP；也可导入流程 JSON。启动前不需要数据文件，不弹出选文件窗口。
+
+该入口调用 `start_web.ps1`，不传数据参数。也可以在项目目录的 PowerShell 中运行：
 
 ~~~powershell
 .\start_web.ps1
@@ -86,6 +88,7 @@ changes ports. The URL, server PID, logs and stop command are printed.
 `-NoBrowser` / 非交互启动同样不需要文件；只有显式传入 `-DataFile` 才在启动时加载该 H5。
 `web_runs/last_launch.json` 仅保留可选的启动历史，不再用于自动选取输入数据。
 空白页面不会覆盖已有参数记忆；导入数据后恢复适用的参数。重复启动会复用同版本服务，保留当前会话。
+`launch_eels_peakfit.bat` 是命令行批处理分析入口，需要输入数据；日常打开网页请使用上面的双击入口。
 
 常用命令：
 
@@ -130,7 +133,8 @@ uncertainty calculations, spectrum plotting, MAT/HDF5 import, and single-file JS
 - **能量轴**：默认保存的 `ene_raw`，要求各有效像素通道完全一致，不应用逐像素能量修正，也不插值。选择 `ene_corrected` 时，将每条谱线线性插值到第一条有效谱线在全部有效像素公共范围内的通道，不外推，实际通道与操作写入来源记录。
 - **空间方向**：以 `summary.json` 的 `job.coords[index] = [y,x]` 和 `pixels/<index>.json.gz` 对应，不能按文件排序直接 reshape。兼容旧版完整包及并行版的 `pixel_indices`；未计算和显式失败像素留为 NaN，报告数量，不补零。
 - **空间尺寸自动读取，不手填**：已接入处理端新增的 `spatial_calibration.json`（schema_version 1）及 `maps.npz` 内的 `spatial_x` / `spatial_y`、单位和逐像素坐标。要求坐标与 `[y,x]` 排列一致；显式物理单位换算为 nm，降序空间轴会连同数据一起反向排列并记录，不插值。另兼容 `maps.npz` 或 `dataset.json` 内直接保存的一维 `x_nm`、`y_nm`。未标定的 pixel / unknown 轴不能当作 nm：旧包缺尺寸时会报告已读取像素/通道数量，保留原会话，需处理端重新导出。
-- **缺失参考图**：ZIP 的温度、可靠性、R² 等图不替代 `EELS.info.totint`，总计数图保持不可用。
+- **EELS 总计数**：自动读取新版 ZIP 的 `maps.npz/counts_source_totint`、`counts.json` 或逐像素 `count_info.source_totint`（counts schema v1），并交叉校验重复记录。保留原始 `EELS.info.totint` 到 H5，可在 UI 选择“EELS 总计数”底图及衬度拟合选区；谱线选择和能量轴插值不改变该图。缺失位置保持 NaN，坐标翻转时同步翻转。
+- **计数口径**：`counts_total` / `total_counts` 是 ZEST 拟合能窗内的谱线求和，不等同于原始 `EELS.info.totint`。只有前者、温度、可靠性或 R² 的 ZIP 不启用原始总计数图。旧 ZIP 仍可导入；之前转换的 H5 不会自动补入新计数，需重新导入新版 ZIP。
 - 导入窗口显示读取进度；完成后页面顶部显示实际谱线和能量轴口径。选区、PCA、高斯和多变量工作流沿用既有入口。失败时保留当前数据、参数及分析结果。
 - 新 H5 保存 `zest_import_json` 来源记录。两类结果 JSON 的 `reproducibility.data.input_preparation` 记录 ZIP 来源、谱线选择、能量处理、像素数量及空间标定状态，不包含全谱。复现和流程 JSON 导入继续使用生成的 H5；请保留该文件。
 

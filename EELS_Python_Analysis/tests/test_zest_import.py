@@ -19,7 +19,8 @@ from eelsfit.zest_import import read_zest_archive, VERSION
 
 
 def make_archive(path, *, geometry=True, parallel=True, missing=(), shifted=False,
-                 mutate=None, prefix="", dataset_json=False, data=None, producer_schema=False, unit="nm"):
+                 mutate=None, prefix="", dataset_json=False, data=None, producer_schema=False, unit="nm",
+                 counts=False, count_sources=("maps", "pixels", "document"), mutate_counts=None):
     energy = np.linspace(0., 100., 101)
     if data is None:
         values = np.array([[10*np.exp(-.5*((energy-45)/5)**2) + .1*y + .02*x - .3
@@ -61,6 +62,27 @@ def make_archive(path, *, geometry=True, parallel=True, missing=(), shifted=Fals
                      "unrelated_statistic": {"__zest_float__": "nan"}}
         if parallel:
             pixels[i].update(pixel_y=y+1, pixel_x=x+1)
+    count_document = None
+    if counts:
+        if data.total_counts is None:
+            data.total_counts = np.arange(ny*nx, dtype=float).reshape(ny,nx)*13 + 1000
+        source_map = np.full((ny,nx),np.nan)
+        rows = []
+        for i in ids:
+            y,x = coords[i]
+            value = data.total_counts[y,x]
+            source_map[y,x] = value
+            info = dict(schema_version=1,source_totint=float(value) if np.isfinite(value) else None)
+            rows.append(dict(file=f"pixels/{i:06d}.json.gz",result_index=i,pixel_y=y+1,pixel_x=x+1,count_info=copy.deepcopy(info)))
+            if "pixels" in count_sources:
+                pixels[i]["count_info"] = info
+        if "maps" in count_sources:
+            maps.update(counts_schema_version=1,counts_source_totint=source_map,
+                        counts_total=np.full((ny,nx),123.),counts_available=np.zeros((ny,nx),dtype=bool))
+        if "document" in count_sources:
+            count_document = dict(schema_version=1,shape=[ny,nx],pixels=rows)
+            if mutate_counts:
+                mutate_counts(count_document)
     summary = {"job": {"id": "fixture", "coords": coords,
                         "status": "cancelled" if missing else "completed"}}
     if mutate:
@@ -70,6 +92,8 @@ def make_archive(path, *, geometry=True, parallel=True, missing=(), shifted=Fals
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(prefix+"summary.json", json.dumps(summary))
         archive.writestr(prefix+"maps.npz", buffer.getvalue())
+        if count_document is not None:
+            archive.writestr(prefix+"counts.json",json.dumps(count_document))
         if spatial is not None:
             archive.writestr(prefix+"spatial_calibration.json",json.dumps(spatial))
         if dataset_json and geometry:
@@ -117,6 +141,79 @@ class ZestImportTests(unittest.TestCase):
         raw = read_zest_archive(self.source, {"signal": "raw_data"})
         np.testing.assert_allclose(model.intensity, expected.intensity*.9)
         np.testing.assert_allclose(raw.intensity, expected.intensity + 20*np.exp(-.5*(expected.energy_meV/3)**2))
+
+    def test_source_counts_roundtrip_all_signals_and_available_reference(self):
+        from eelsfit.reference_maps import build_reference_maps
+        expected = make_archive(self.source, counts=True, prefix="export/")
+        for signal in ("raw_minus_zlp", "vib_only", "raw_data"):
+            result = read_zest_archive(self.source, {"signal":signal,"energy_axis":"corrected"})
+            np.testing.assert_array_equal(result.total_counts,expected.total_counts)
+            self.assertEqual(result.provenance['total_counts_valid_pixels'],15)
+        loaded = prepare_import(self.source,self.output)
+        np.testing.assert_array_equal(loaded.total_counts,expected.total_counts)
+        self.assertEqual(loaded.attributes['total_counts_status'],'available')
+        reference = build_reference_maps(loaded)['maps']['total_counts']
+        self.assertTrue(reference['available'])
+        np.testing.assert_array_equal(reference['values'],expected.total_counts)
+
+    def test_individual_count_sources_and_missing_source_are_supported(self):
+        for sources in (("maps",),("pixels",),("document",)):
+            with self.subTest(sources=sources):
+                expected = make_archive(self.source,counts=True,count_sources=sources)
+                np.testing.assert_array_equal(read_zest_archive(self.source).total_counts,expected.total_counts)
+        expected.total_counts[:] = np.nan
+        make_archive(self.source,data=expected,counts=True)
+        result = read_zest_archive(self.source)
+        self.assertIsNone(result.total_counts)  # counts_total is deliberately nonzero.
+        self.assertEqual(result.provenance['total_counts_status'],'missing_in_input')
+
+    def test_counts_partial_export_failed_spectrum_and_axis_reversal(self):
+        expected = make_archive(self.source,counts=True)
+        expected.total_counts[0,1] = np.nan
+        expected.total_counts[1,2] = 0
+        descending = copy.deepcopy(expected)
+        descending.x_nm = descending.x_nm[::-1]
+        descending.y_nm = descending.y_nm[::-1]
+        descending.intensity = descending.intensity[::-1,::-1,:]
+        descending.total_counts = descending.total_counts[::-1,::-1]
+        make_archive(self.source,data=descending,counts=True,missing=(0,),
+                     mutate=lambda p,m,s:p[2].update(error="fit failed"))
+        result = read_zest_archive(self.source)
+        expected.total_counts[-1,-1] = np.nan
+        np.testing.assert_array_equal(result.total_counts,expected.total_counts)
+        self.assertTrue(np.isnan(result.intensity[0,-1]).all())
+        self.assertTrue(np.isfinite(result.total_counts[0,-1]))
+        loaded = prepare_import(self.source,self.output)
+        np.testing.assert_array_equal(loaded.total_counts,expected.total_counts)
+
+    def test_invalid_or_conflicting_counts_fail_without_publishing(self):
+        mutations = [
+            lambda p,m,s:m.update(counts_schema_version=2),
+            lambda p,m,s:m.update(counts_source_totint=np.ones((5,3))),
+            lambda p,m,s:m.update(counts_source_totint=np.ones((3,5),dtype=complex)),
+            lambda p,m,s:m['counts_source_totint'].__setitem__((0,0),np.inf),
+            lambda p,m,s:p[0]['count_info'].update(source_totint=42.),
+            lambda p,m,s:p[0]['count_info'].update(source_totint=None),
+            lambda p,m,s:p[0]['count_info'].update(source_totint=True),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                make_archive(self.source,counts=True,mutate=mutate)
+                with self.assertRaises(ValueError):
+                    prepare_import(self.source,self.output)
+                self.assertFalse(self.output.exists())
+                self.assertFalse(self.output.with_name(self.output.name+'.writing').exists())
+        for change in (lambda d:d.update(schema_version=2),
+                       lambda d:d['pixels'][0].update(pixel_x=5),
+                       lambda d:d['pixels'][0]['count_info'].update(source_totint=99),
+                       lambda d:d['pixels'].pop()):
+            make_archive(self.source,counts=True,mutate_counts=change)
+            with self.assertRaises(ValueError):
+                prepare_import(self.source,self.output)
+        make_archive(self.source,counts=True,missing=(0,),
+                     mutate=lambda p,m,s:m['counts_source_totint'].__setitem__((0,0),123.))
+        with self.assertRaisesRegex(ValueError,'未导出像素'):
+            prepare_import(self.source,self.output)
 
     def test_corrected_axes_interpolate_only_shared_support(self):
         expected = make_archive(self.source, shifted=True)
