@@ -1,6 +1,8 @@
 # EELS tools
 
-用于 Si／界面／Ge 区域的本地 EELS 分析与 PCA 结果绘图。包含中文网页 UI、MAT→HDF5 转换、峰分析、不确定度计算，以及复现、绘图和参数重算工作流。
+当前分析网页版本：**1.0.0**（[更新记录](EELS_Python_Analysis/CHANGELOG.md)）。
+
+用于 Si／界面／Ge／位错核区域的本地 EELS 分析与 PCA 结果绘图。包含中文网页 UI、MAT→HDF5 转换、EELS-ZEST ZIP 导入、峰分析、不确定度计算、多变量界面残差分析，以及复现、绘图和参数重算工作流。
 
 仓库仅保存代码、测试和文档，不附带实验 MAT/H5、分析 JSON、图件、MATLAB toolbox、虚拟环境或本机配置。安装后需提供自己的数据。
 
@@ -8,7 +10,7 @@
 
 | 目录 | 用途 |
 | --- | --- |
-| [EELS_Python_Analysis](EELS_Python_Analysis/README.md) | Flask 网页、数值分析、MAT/H5 导入、JSON 导出与复现 |
+| [EELS_Python_Analysis](EELS_Python_Analysis/README.md) | Flask 网页、数值分析、MAT/H5/ZEST ZIP 导入、流程 JSON 恢复、结果导出与复现 |
 | [eels_plot_workflow](eels_plot_workflow/README.md) | 从 PCA JSON 恢复谱线、绘制组合图、补算缺失误差和重算突出度阈值 |
 | [MATLAB 转换脚本](EELS_Python_Analysis/matlab) | 单对象与批量 MAT→HDF5，保留可用的 EELS 总计数 |
 
@@ -19,18 +21,18 @@
 ```powershell
 py -3.12 -m venv .\EELS_Python_Analysis\.venv
 .\EELS_Python_Analysis\.venv\Scripts\python.exe -m pip install -r .\EELS_Python_Analysis\requirements.txt
-.\EELS_Python_Analysis\start_web.ps1 -DataFile 'C:\data\sample.h5'
+.\EELS_Python_Analysis\start_web.ps1
 ```
 
-将示例路径换成自己的 HDF5 文件。首次启动须显式指定已有 H5；历史默认文件 `2-15-result5.h5` 不随仓库分发。网页打开后，可以导入其他 H5 或可信的 Toolbox MAT 文件。服务只监听本机 `127.0.0.1`，实际端口以启动输出为准。
+打开 [http://127.0.0.1:8768](http://127.0.0.1:8768)。首次启动为空白界面，在网页中导入 H5、可信的 Toolbox MAT、已保存空间标定的 EELS-ZEST ZIP，或导入流程 JSON 继续分析。服务只监听本机；端口被其他服务占用时会明确提示，不自动改用其他端口。同项目、同版本的已有服务会复用，保留当前数据与结果。
 
 停止前先导出结果，再按实际端口运行：
 
 ```powershell
-.\EELS_Python_Analysis\stop_web.ps1 -Port 8765
+.\EELS_Python_Analysis\stop_web.ps1 -Port 8768
 ```
 
-首次只有 MAT 时，先安装 MATLAB 和另行获取的 3D-EELS TOOLBOX，然后在当前 PowerShell 设置路径并转换：
+如需转换 Toolbox MAT，先安装 MATLAB 和另行获取的 3D-EELS TOOLBOX，然后在当前 PowerShell 设置路径。下面也演示先在命令行转换、再显式载入 H5 的方式：
 
 ```powershell
 $env:EELS_MATLAB_PATH = 'C:\Program Files\MATLAB\R2025a\bin\matlab.exe'
@@ -43,11 +45,15 @@ MATLAB 版本路径按本机安装修改。H5 分析、JSON 复现和绘图不�
 
 ## 网页功能
 
+- EELS-ZEST Parallel 风格的半透明卡片界面、数据概览、参数侧栏及窄屏布局，右上角显示应用版本。
+- 从导入窗口直接读取 EELS-ZEST ZIP，自动验证空间标定、像素坐标和能量轴，保留缺失像素及有符号信号。
 - Si／界面／Ge 选框支持移动、八方向缩放和重画。
 - PCA 峰识别、高斯拟合与 CPU bootstrap 不确定度计算。
 - 能窗积分、EELS 总计数、窄能窗和参考谱贡献底图，以及候选界面中心；切换底图保留选框。
 - 可选 erf／logistic 衬度拟合，支持自定义区域边界百分比、预览后应用、继续手动调整，以及取消和超时恢复。
 - 导出单个 `eels_peak_results_v1` JSON，默认沿用导入文件名，保存实际参数、峰结果及复现信息。
+- NMF / MCR-ALS 工作流支持四区选区、条带体谱、有符号残差和联合分峰；独立导出 `eels_interface_workflow_v1` JSON，并支持导入后继续调整。
+- 参数草稿保存在本机，重启后恢复适用的选项和选区；恢复参数不自动启动分析。
 
 EELS 总计数不等同于 HAADF；候选中心、衬度过渡宽度和参考谱贡献不能直接解释为结构界面、互扩散厚度或元素含量。详见 [参考图](EELS_Python_Analysis/docs/参考图与候选界面.md) 与 [拟合选区](EELS_Python_Analysis/docs/衬度拟合选区.md)。
 

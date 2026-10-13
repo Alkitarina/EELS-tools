@@ -55,6 +55,7 @@ const byId = (id) => document.getElementById(id);
 const regionLabel = (region) => regionLabels[region] || region;
 const regionListLabel = (regions) => regions.map(regionLabel).join("、");
 const isPcaMode = () => byId("fit-mode").value === "pca";
+const hasDataset = () => Boolean(state.info) && state.info.dataset_loaded !== false;
 
 async function requestApi(url, options) {
   const response = await fetch(url, {
@@ -151,7 +152,24 @@ function settingsPayload() {
 }
 
 function syncFitMode() {
+  const loaded = hasDataset();
+  byId("empty-workspace").hidden = loaded;
+  document.querySelector(".method-switch").hidden = !loaded;
+  document.querySelector(".preferences-bar").hidden = !loaded;
+  if (!loaded) {
+    byId("legacy-workspace").hidden = byId("workflow-workspace").hidden = true;
+    return;
+  }
   const mode = byId("fit-mode").value;
+  const workflow = mode === "multivariate";
+  byId("legacy-workspace").hidden = workflow;
+  byId("workflow-workspace").hidden = !workflow;
+  byId("method-description").textContent = workflow
+    ? "全像素分解 → 空间分区 → 条带体谱 → 有符号残差 → 联合拟合检查"
+    : mode === "pca" ? "PCA 重建谱与可分辨峰测量；原有选区、参数和结果保留。"
+    : "高斯线型分峰与不确定度；仅显示当前方法的模型参数。";
+  if (workflow) { EelsWorkflow.open(); return; }
+  byId("method-settings-title").textContent = mode === "pca" ? "PCA 参数" : "高斯模型参数";
   const automatic = mode === "auto";
   const pca = mode === "pca";
   byId("auto-fields").classList.toggle("is-hidden", !automatic);
@@ -162,6 +180,7 @@ function syncFitMode() {
   byId("fit-active").textContent = pca ? "分析当前区域" : "拟合当前区域";
   byId("fit-all").textContent = pca ? "分析全部区域" : "拟合全部区域";
   renderResults();
+  drawMap();
 }
 
 function roiSignature(roi) {
@@ -245,6 +264,8 @@ function setBusy(busy) {
   document.querySelectorAll(".action-button, .controls-band input, .controls-band select, #update-map, #map-kind").forEach((button) => {
     button.disabled = busy;
   });
+  byId("import-workflow").disabled = busy || state.info?.workflow_import_version !== "saved_workflow_json_v1";
+  byId("empty-import-workflow").disabled = byId("import-workflow").disabled;
   EelsRegionFit.syncControls();
 }
 
@@ -290,14 +311,14 @@ function setupCanvas(canvas) {
 function drawAxis(context, layout, xLabel, yLabel) {
   const { left, top, width, height } = layout;
   const yLabelOffset = layout.yLabelOffset || 38;
-  context.strokeStyle = "#9ca8aa";
+  context.strokeStyle = "#cbd5e1";
   context.lineWidth = 1;
   context.beginPath();
   context.moveTo(left, top);
   context.lineTo(left, top + height);
   context.lineTo(left + width, top + height);
   context.stroke();
-  context.fillStyle = "#5b686d";
+  context.fillStyle = "#64748b";
   context.font = "12px Segoe UI, Arial, sans-serif";
   context.textAlign = "center";
   context.fillText(xLabel, left + width / 2, top + height + 30);
@@ -308,10 +329,11 @@ function drawAxis(context, layout, xLabel, yLabel) {
   context.restore();
 }
 
-function drawTicks(context, layout, xMin, xMax, yMin, yMax) {
+function drawTicks(context, layout, xMin, xMax, yMin, yMax, formatter = null) {
+  const tick = formatter || ((value) => decimal(value, 1));
   const { left, top, width, height } = layout;
-  context.strokeStyle = "#e5e9e9";
-  context.fillStyle = "#5b686d";
+  context.strokeStyle = "#e8eef6";
+  context.fillStyle = "#64748b";
   context.lineWidth = 1;
   context.font = "11px Segoe UI, Arial, sans-serif";
   for (let index = 0; index <= 4; index += 1) {
@@ -325,9 +347,9 @@ function drawTicks(context, layout, xMin, xMax, yMin, yMax) {
     context.lineTo(left + width, y);
     context.stroke();
     context.textAlign = "center";
-    context.fillText(decimal(xMin + (xMax - xMin) * fraction, 1), x, top + height + 16);
+    if (index % (layout.xTickStride || 1) === 0) context.fillText(tick(xMin + (xMax - xMin) * fraction), x, top + height + 16);
     context.textAlign = "right";
-    context.fillText(decimal(yMin + (yMax - yMin) * fraction, 1), left - 7, y + 4);
+    context.fillText(tick(yMin + (yMax - yMin) * fraction), left - 7, y + 4);
   }
 }
 
@@ -615,7 +637,7 @@ function drawSpectrum() {
   const hasFit = Boolean(fit);
   const hasPca = Boolean(pca);
   updateLegendButtons(hasFit, hasPca);
-  context.fillStyle = "#6a767a";
+  context.fillStyle = "#64748b";
   context.font = "13px Segoe UI, Arial, sans-serif";
 
   if (!data) {
@@ -668,14 +690,14 @@ function drawSpectrum() {
     drawLine(
       context,
       pca.energy_meV.map((energy, index) => toPoint(energy, pca.reconstructed[index])),
-      "#087f7a",
+      "#2563eb",
       2.3
     );
     pca.peaks.forEach((peak) => {
       const left = toPoint(peak.left_meV, peak.width_height);
       const right = toPoint(peak.right_meV, peak.width_height);
       const apex = toPoint(peak.center_meV, peak.height);
-      context.strokeStyle = "#087f7a";
+      context.strokeStyle = "#2563eb";
       context.lineWidth = 1.4;
       context.beginPath();
       context.moveTo(left.x, left.y);
@@ -685,7 +707,7 @@ function drawSpectrum() {
       context.moveTo(right.x, right.y - 4);
       context.lineTo(right.x, right.y + 4);
       context.stroke();
-      context.fillStyle = "#087f7a";
+      context.fillStyle = "#2563eb";
       context.beginPath();
       context.arc(apex.x, apex.y, 3.2, 0, Math.PI * 2);
       context.fill();
@@ -724,7 +746,7 @@ function drawSpectrum() {
     (hasPca && state.curveVisibility.pca) ||
     (hasFit && (state.curveVisibility.fit || state.curveVisibility.baseline));
   if (!anyVisible) {
-    context.fillStyle = "#6a767a";
+    context.fillStyle = "#64748b";
     context.textAlign = "center";
     context.fillText("当前没有显示曲线。", layout.left + layout.width / 2, layout.top + layout.height / 2);
   }
@@ -1204,18 +1226,21 @@ function registerMapInteraction() {
 
 function bindControls() {
   EelsRegionFit.bind();
+  byId("empty-import-data").addEventListener("click", () => byId("import-data").click());
+  byId("empty-import-workflow").addEventListener("click", () => byId("import-workflow").click());
   byId("map-kind").addEventListener("change", switchMapKind);
   byId("show-centers").addEventListener("change", drawMap);
   byId("import-data").addEventListener("click", () => {
     byId("import-message").textContent = "";
+    syncZestImportOptions();
     byId("import-dialog").showModal();
   });
   byId("import-cancel").addEventListener("click", () => byId("import-dialog").close());
   byId("import-dialog").addEventListener("cancel", (event) => {
     if (state.busy) event.preventDefault();
   });
-  byId("import-file").addEventListener("change", () => { byId("import-path").value = ""; });
-  byId("import-path").addEventListener("input", () => { byId("import-file").value = ""; });
+  byId("import-file").addEventListener("change", () => { byId("import-path").value = ""; syncZestImportOptions(); });
+  byId("import-path").addEventListener("input", () => { byId("import-file").value = ""; syncZestImportOptions(); });
   byId("import-form").addEventListener("submit", importData);
   document.querySelectorAll("input[name='region']").forEach((radio) => {
     radio.addEventListener("change", (event) => {
@@ -1233,7 +1258,7 @@ function bindControls() {
   byId("toggle-baseline").addEventListener("click", () => toggleCurve("baseline"));
   byId("fit-mode").addEventListener("change", () => {
     syncFitMode();
-    setStatus(isPcaMode() ? "当前使用纯 PCA 峰分析。" : "当前使用高斯分峰。" );
+    if (byId("fit-mode").value !== "multivariate") setStatus(isPcaMode() ? "当前使用纯 PCA 峰分析。" : "当前使用高斯分峰。" );
   });
   byId("update-map").addEventListener("click", updateMap);
   byId("fit-active").addEventListener("click", () => analyzeRegions([state.activeRegion]));
@@ -1250,8 +1275,35 @@ function bindControls() {
   registerMapInteraction();
 }
 
+function renderDatasetOverview() {
+  const loaded = hasDataset();
+  const format = (value) => Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  const info = state.info;
+  byId("metric-pixels").textContent = loaded ? format(info.shape.y * info.shape.x) : "—";
+  byId("metric-spatial-shape").textContent = loaded ? info.shape.y + " × " + info.shape.x + " · y × x" : "导入光谱图像以开始";
+  byId("metric-channels").textContent = loaded ? format(info.shape.energy) : "—";
+  byId("metric-energy").textContent = loaded ? info.energy_meV.map(format).join(" – ") : "—";
+  byId("metric-extent").textContent = loaded ? format(info.x_nm[1] - info.x_nm[0]) + " × " + format(info.y_nm[1] - info.y_nm[0]) : "—";
+}
+
 async function loadDatasetInfo({ preserveSettings = false } = {}) {
     state.info = await requestApi("/api/info");
+    byId("app-version").textContent = state.info.app_version ? "v" + state.info.app_version : "";
+    renderDatasetOverview();
+    EelsWorkflow.resetDataset(state.info, preserveSettings);
+    if (!hasDataset()) {
+      state.rois = {}; state.map = state.signalMap = state.references = null;
+      invalidateAllAnalyses();
+      byId("dataset-name").textContent = "尚未导入数据";
+      byId("dataset-shape").textContent = "";
+      byId("dataset-import-note").hidden = true;
+      syncFitMode();setBusy(false);
+      return;
+    }
+    byId("empty-workspace").hidden = true;
+    document.querySelector(".method-switch").hidden = false;
+    document.querySelector(".preferences-bar").hidden = false;
+    byId("fit-mode").querySelector('[value="multivariate"]').disabled = !state.info.workflow_version;
     EelsRegionFit.resetForDataset();
     const parallel = state.info.bootstrap_engine === "cpu_parallel_v1";
     byId("bootstrap-workers").closest("label").hidden = !parallel;
@@ -1274,6 +1326,11 @@ async function loadDatasetInfo({ preserveSettings = false } = {}) {
     byId("dataset-name").textContent = state.info.source.split(/[\\/]/).pop();
     byId("dataset-shape").textContent =
       state.info.shape.y + " × " + state.info.shape.x + " × " + state.info.shape.energy + "（y × x × 能量通道）";
+    const preparation = state.info.input_preparation;
+    byId("dataset-import-note").hidden = !preparation;
+    byId("dataset-import-note").textContent = preparation
+      ? "ZEST · " + preparation.signal_label + " · " + (preparation.options.energy_axis === "raw" ? "原能量轴" : "校正能量轴 / 线性插值") +
+        " · 有效像素 " + preparation.valid_pixels + "，缺失 " + preparation.missing_pixels : "";
     // Dataset-derived defaults apply only on first load, never on file import.
     if (preserveSettings) return;
     if (state.info.zlp_fwhm_meV != null && Number.isFinite(Number(state.info.zlp_fwhm_meV))) {
@@ -1291,27 +1348,39 @@ async function loadDatasetInfo({ preserveSettings = false } = {}) {
     }
 }
 
+function syncZestImportOptions() {
+  const name = byId("import-file").files[0]?.name || byId("import-path").value.trim().replace(/^"|"$/g, "");
+  const enabled = /\.zip$/i.test(name);
+  byId("zest-import-options").hidden = !enabled;
+  byId("zest-import-options").disabled = !enabled;
+  return enabled;
+}
+
 async function importData(event) {
   event.preventDefault();
+  const firstImport = !hasDataset();
   const file = byId("import-file").files[0];
   const path = byId("import-path").value.trim();
   if (!file && !path) {
     byId("import-message").textContent = "请选择文件或填写本地绝对路径。";
     return;
   }
+  const isZest = syncZestImportOptions();
+  const zestOptions = isZest ? {signal: byId("zest-signal").value, energy_axis: byId("zest-energy-axis").value} : null;
   setBusy(true);
   state.previewRequestId++;
-  byId("import-form").querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
+  byId("import-form").querySelectorAll("button, input, select").forEach((control) => { control.disabled = true; });
   try {
     let options;
     if (file) {
       const form = new FormData();
       form.append("file", file);
+      if (isZest) form.append("zest_options", JSON.stringify(zestOptions));
       options = { method: "POST", body: form };
     } else {
-      options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) };
+      options = { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, ...(isZest ? {zest_options: zestOptions} : {}) }) };
     }
-    const message = /\.mat$/i.test(file?.name || path.replace(/"/g, ""))
+    const message = isZest ? "正在读取 EELS-ZEST ZIP 并恢复数据立方体……" : /\.mat$/i.test(file?.name || path.replace(/"/g, ""))
       ? "正在后台启动 MATLAB 并转换 EELS 数据，请稍候……" : "正在读取并检查 HDF5 数据……";
     byId("import-message").textContent = message;
     setStatus(message);
@@ -1319,21 +1388,29 @@ async function importData(event) {
     while (true) {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       const job = await requestApi("/api/jobs/" + encodeURIComponent(started.job_id));
+      if (isZest && job.status === "running" && job.total > 1) {
+        byId("import-message").textContent = "正在读取 ZEST 像素谱线：" + job.completed + " / " + job.total;
+      }
       if (job.status === "error") throw new Error(job.error || "导入失败。 ");
       if (job.status === "done") break;
     }
-    await loadDatasetInfo({ preserveSettings: true });
+    await loadDatasetInfo({ preserveSettings: !firstImport });
+    if (firstImport) await EelsPreferences.restore();
+    syncFitMode();
     const previewed = await updateMap();
     await prepareReferenceDisplay();
     renderResults();
     byId("import-dialog").close();
-    setStatus("数据导入完成，已沿用上一次的设置；旧分析结果已清空。" +
+    if (firstImport) EelsPreferences.bind();
+    EelsPreferences.schedule();
+    setStatus((firstImport ? "数据已导入，可以开始分析。" : "数据导入完成，已沿用上一次的设置；旧分析结果已清空。") +
       byId("status").textContent, !previewed);
   } catch (error) {
     byId("import-message").textContent = error.message;
     setStatus(error.message, true);
   } finally {
-    byId("import-form").querySelectorAll("button, input").forEach((control) => { control.disabled = false; });
+    byId("import-form").querySelectorAll("button, input, select").forEach((control) => { control.disabled = false; });
+    syncZestImportOptions();
     setBusy(false);
   }
 }
@@ -1378,13 +1455,21 @@ async function exportResults() {
 }
 
 async function initialize() {
-  bindControls();
   try {
+    await EelsWorkflow.mount();
+    bindControls();
     await loadDatasetInfo();
+    if (!hasDataset()) {
+      await EelsWorkflow.open();
+      return;
+    }
+    await EelsPreferences.restore();
     syncFitMode();
     await updateMap();
     await prepareReferenceDisplay();
+    if (byId("map-kind").value !== state.mapKind) await switchMapKind();
     renderResults();
+    EelsPreferences.bind();
   } catch (error) {
     setStatus(error.message, true);
   }

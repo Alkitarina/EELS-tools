@@ -150,6 +150,7 @@ def build_result_document(data, analyses, serialized_results, software: dict) ->
                 "original_source": data.attributes.get("original_source", data.attributes.get("source", str(data.source))),
                 "shape": list(data.shape), "axis_order": "y,x,energy",
                 "checksum": data_checksum(data),
+                **({"input_preparation": data.attributes["zest_import"]} if "zest_import" in data.attributes else {}),
             },
             "software": software,
             "notes": [

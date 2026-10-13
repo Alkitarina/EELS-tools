@@ -1,9 +1,10 @@
+const {artifactPath} = require('./artifacts.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 
-const output = process.env.EELS_TEST_OUTPUT || path.resolve(__dirname, '..', '.tmp_roi_ui');
+const output = process.env.EELS_TEST_OUTPUT || artifactPath('.tmp_roi_ui');
 fs.mkdirSync(output, { recursive: true });
 const url = process.env.EELS_TEST_URL || 'http://127.0.0.1:8770';
 const closeTo = (a, b) => assert(Math.abs(a - b) < 1e-5, `${a} != ${b}`);

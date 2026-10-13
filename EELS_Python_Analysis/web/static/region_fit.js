@@ -185,7 +185,7 @@ const EelsRegionFit = (() => {
     for (const [x, color] of lines(fit)) {
       context.strokeStyle=color; context.beginPath(); context.moveTo(px(x), 4); context.lineTo(px(x), height-30); context.stroke();
     }
-    context.setLineDash([]); context.strokeStyle="#087e7d"; context.lineWidth=2;
+    context.setLineDash([]); context.strokeStyle="#2563eb"; context.lineWidth=2;
     context.beginPath(); fit.curve_x_nm.forEach((x, i) => i ? context.lineTo(px(x), py(fit.curve_contrast[i])) : context.moveTo(px(x), py(fit.curve_contrast[i]))); context.stroke();
     context.fillStyle="#364651"; result.profile_x_nm.forEach((x, i) => {
       if (i % Math.max(1, Math.ceil(points.length/2000))) return;

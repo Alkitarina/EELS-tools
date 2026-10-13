@@ -1,3 +1,4 @@
+const {artifactPath} = require('./artifacts.cjs');
 // Starts its own ephemeral QA server; never imports into a user's running session.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,7 +9,7 @@ const { chromium } = require('playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
-  const output = fs.mkdtempSync(path.join(root, '.tmp_import_settings_'));
+  const output = fs.mkdtempSync(artifactPath('.tmp_import_settings_'));
   const server = spawn(path.join(root, '.venv', 'Scripts', 'python.exe'),
     ['-X', 'utf8', path.join(__dirname, 'browser_import_settings_server.py'), output],
     { cwd: root, windowsHide: true });

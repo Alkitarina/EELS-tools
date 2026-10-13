@@ -49,6 +49,7 @@ secrets*
 *.tif
 *.tiff
 *.svg
+!/EELS_Python_Analysis/web/static/mark.svg
 *.pdf
 *.ppt
 *.pptx

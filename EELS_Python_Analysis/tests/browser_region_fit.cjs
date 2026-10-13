@@ -1,3 +1,4 @@
+const {artifactPath} = require('./artifacts.cjs');
 // All mutations target this test's isolated service and generated fixture data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,8 +9,8 @@ const { chromium } = require('playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
-  const output = fs.mkdtempSync(path.join(root, '.tmp_reference_browser_regionfit_'));
-  const server = spawn(path.join(root, '.venv/Scripts/python.exe'),
+  const output = fs.mkdtempSync(artifactPath('.tmp_reference_browser_regionfit_'));
+  const server = spawn(path.join(root,'.venv/Scripts/python.exe'),
     ['-X','utf8',path.join(__dirname,'browser_reference_maps_server.py'),output],{cwd:root,windowsHide:true});
   const closed = once(server,'close');
   let logs='', browser;

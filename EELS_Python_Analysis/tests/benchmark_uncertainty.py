@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=int, default=200)
     parser.add_argument("--gpu", action="store_true")
-    parser.add_argument("--data", default="2-15-result5.h5")
+    parser.add_argument("--data", default="sample.h5")
     parser.add_argument("--cpu-workers", type=int, nargs="+", default=[0, 1, 4, 8])
     parser.add_argument("--threads", type=int, default=0)
     args = parser.parse_args()
@@ -106,7 +106,8 @@ def main():
             measurements["gpu_max_center_difference_meV"] = float(np.max(np.abs(centers - previous.centers_meV)))
             measurements["gpu_max_width_difference_meV"] = float(np.max(np.abs(widths - previous.widths_meV)))
     service.shutdown()
-    root = Path(__file__).resolve().parents[1] / ".tmp_bootstrap_performance"
+    from eelsfit.runtime_paths import test_runs_dir
+    root = test_runs_dir() / ".tmp_bootstrap_performance"
     root.mkdir(exist_ok=True)
     (root / "benchmark.json").write_text(json.dumps(measurements, indent=2), encoding="utf-8")
     print(json.dumps(measurements, indent=2), flush=True)

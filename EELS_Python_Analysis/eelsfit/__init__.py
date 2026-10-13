@@ -1,5 +1,7 @@
 """Reusable routines for constrained EELS peak fitting."""
 
+from .version import __version__
+
 from .core import (
     BootstrapResult,
     FitConfig,
@@ -20,6 +22,7 @@ from .pca import (
 )
 
 __all__ = [
+    "__version__",
     "BootstrapResult",
     "EELSData",
     "FitConfig",

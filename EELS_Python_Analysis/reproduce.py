@@ -17,6 +17,7 @@ from eelsfit.exporting import RESULT_FORMAT, CHECKSUM_SCOPE, build_result_docume
 from eelsfit.importing import prepare_import
 from eelsfit.pca import spatial_block_pca_bootstrap
 from eelsfit.bootstrap_runtime import LEGACY_SCHEME
+from eelsfit.runtime_paths import runtime_work_dir
 
 
 def replay(result_file: Path, data_path: Path | None = None, *, allow_version_mismatch=False) -> dict:
@@ -58,8 +59,7 @@ def replay(result_file: Path, data_path: Path | None = None, *, allow_version_mi
         data_path = next((Path(path) for path in candidates if isinstance(path, str) and Path(path).is_file()), None)
     if data_path is None:
         raise ValueError("Input data not found. Supply --data with the retained HDF5 or trusted toolbox MAT file.")
-    root = Path(__file__).resolve().parent
-    with tempfile.TemporaryDirectory(prefix=".tmp_reproduce_", dir=root) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".tmp_reproduce_", dir=runtime_work_dir()) as temporary:
         data = prepare_import(Path(data_path), Path(temporary) / "converted.h5")
         if data_checksum(data) != checksum:
             raise ValueError("Data checksum mismatch; refusing to reproduce changed input.")

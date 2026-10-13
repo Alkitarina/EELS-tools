@@ -3,28 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>EELS 谱峰分析</title>
+  <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/workbench.css">
 </head>
 <body>
+  <header class="topbar">
+    <div class="brand"><img src="/static/mark.svg" alt=""><div><h1>EELS 谱峰分析</h1><small>SPECTROSCOPY WORKBENCH</small></div></div>
+    <div class="top-right"><span class="version">PCA · GAUSSIAN · NMF / MCR-ALS</span><span id="app-version" class="app-version" aria-label="应用版本"></span><span class="local-badge"><i></i>本地工作台</span></div>
+  </header>
   <div class="app-shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">本地分析服务</p>
-        <h1>EELS 谱峰分析</h1>
+    <div class="workflow-toolbar">
+      <ol class="workspace-route" aria-label="分析流程概览">
+        <li><b>01</b><span>导入光谱数据<small>H5 / MAT / ZEST ZIP</small></span></li>
+        <li><b>02</b><span>选区与分析<small>PCA · Gaussian · MCR-ALS</small></span></li>
+        <li><b>03</b><span>查看与导出<small>峰参数 · 不确定度 · JSON</small></span></li>
+      </ol>
+      <div class="toolbar-actions">
+        <button id="import-workflow" class="secondary-button action-button" type="button">导入流程 JSON</button>
+        <button id="import-data" class="primary-button action-button" type="button"><span class="plus" aria-hidden="true">＋</span> 导入数据</button>
       </div>
-      <div class="dataset-meta">
-        <span id="dataset-name">正在读取数据</span>
-        <span id="dataset-shape"></span>
-      </div>
-      <button id="import-data" class="secondary-button action-button" type="button">导入数据</button>
-    </header>
+    </div>
+    <div class="dataset-meta">
+      <div class="dataset-identity"><span class="dataset-icon" aria-hidden="true">▦</span><div><span id="dataset-name">正在连接服务</span><span id="dataset-shape"></span></div></div>
+      <span id="dataset-import-note" hidden></span>
+    </div>
+    <section class="metrics-row" aria-label="数据概览">
+      <div class="metric"><span>空间像素</span><strong id="metric-pixels">—</strong><small id="metric-spatial-shape">导入光谱图像以开始</small></div>
+      <div class="metric"><span>能量通道</span><strong id="metric-channels">—</strong><small>当前数据通道数</small></div>
+      <div class="metric"><span>数据能量范围</span><strong id="metric-energy" class="range-value">—</strong><small>meV</small></div>
+      <div class="metric coordinate-card"><span>空间范围</span><strong id="metric-extent" class="range-value">—</strong><small>nm · x × y 像素中心跨度</small></div>
+    </section>
+
+    <nav class="method-switch" aria-label="选择分析方法" hidden>
+      <label for="fit-mode">分析方法</label>
+      <select id="fit-mode" aria-label="分析方式">
+        <option value="pca" selected>纯 PCA 峰分析</option>
+        <option value="auto">高斯分峰 · 自动寻优</option>
+        <option value="manual">高斯分峰 · 手动约束</option>
+        <option value="multivariate">NMF / MCR-ALS · 界面残差工作流</option>
+      </select>
+      <p id="method-description">选择方法后，仅显示对应分析工具；切换保留各自参数与结果。</p>
+    </nav>
+    <div class="preferences-bar" hidden><span id="preferences-status" role="status">正在检查参数记忆…</span><button id="preferences-save" type="button" disabled>保存参数</button></div>
 
     <main>
+      <section id="empty-workspace" class="empty-workspace" hidden aria-label="导入或继续分析">
+        <div class="empty-graphic" aria-hidden="true"><svg viewBox="0 0 120 80"><path class="graphic-grid" d="M0 20H120M0 40H120M0 60H120M20 0V80M40 0V80M60 0V80M80 0V80M100 0V80"/><path class="graphic-spectrum" d="M6 61H24C32 61 32 52 36 51S41 62 47 61C55 61 57 17 64 17S71 60 79 61C85 61 85 40 92 40S98 61 114 61"/></svg></div>
+        <p class="eyebrow">SPECTRAL ANALYSIS</p>
+        <div class="empty-actions"><button id="empty-import-data" class="primary-button action-button" type="button">＋ 导入数据</button><button id="empty-import-workflow" class="secondary-button action-button" type="button">继续已有流程</button></div>
+        <div class="format-tags" aria-label="支持的数据格式"><span>HDF5</span><span>MAT</span><span>EELS-ZEST ZIP</span><span>流程 JSON</span></div>
+        <p id="empty-message" role="status" aria-live="polite">当前未加载文件。启动时不会自动读取上次的数据。</p>
+        <progress id="empty-progress" value="0" max="1" hidden></progress>
+        <button id="empty-cancel" type="button" hidden>取消导入</button>
+      </section>
+      <div id="legacy-workspace" hidden>
       <section class="workspace" aria-label="EELS 交互分析区">
         <article class="tool-pane map-pane">
           <header class="pane-header">
             <div>
+              <p class="eyebrow">SPATIAL VIEW</p>
               <h2 id="map-title">信号图</h2>
               <p id="map-window">积分能量范围</p>
             </div>
@@ -85,6 +125,7 @@
         <article class="tool-pane spectrum-pane">
           <header class="pane-header">
             <div>
+              <p class="eyebrow">SPECTRUM</p>
               <h2>选区平均谱</h2>
               <p id="fit-caption">选择空间区域后显示其平均谱</p>
             </div>
@@ -111,6 +152,7 @@
       </section>
 
       <section class="controls-band" aria-label="分析控制">
+        <header class="controls-header"><p class="eyebrow">ANALYSIS SETTINGS</p><h2>分析参数</h2></header>
         <fieldset class="control-group region-group">
           <legend>当前区域</legend>
           <div class="segmented" role="radiogroup" aria-label="当前区域">
@@ -143,15 +185,7 @@
         </fieldset>
 
         <fieldset class="control-group fit-group">
-          <legend>分析方法</legend>
-          <label class="fit-mode-label">
-            <span>分析方式</span>
-            <select id="fit-mode" aria-label="分析方式">
-              <option value="pca" selected>纯 PCA 峰分析</option>
-              <option value="auto">高斯自动寻优</option>
-              <option value="manual">高斯手动约束</option>
-            </select>
-          </label>
+          <legend id="method-settings-title">PCA 参数</legend>
           <div id="pca-fields" class="fit-fields">
             <label>
               <span>主成分数</span>
@@ -255,6 +289,7 @@
       <section class="results-section" aria-label="峰参数结果">
         <header class="results-header">
           <div>
+            <p class="eyebrow">RESULTS</p>
             <h2>峰参数</h2>
             <p id="result-note">完成分析后将在此显示参数。</p>
           </div>
@@ -279,24 +314,64 @@
           </table>
         </div>
       </section>
+      </div>
+      <section id="workflow-workspace" hidden aria-label="多变量界面残差工作流"></section>
     </main>
+    <footer class="workspace-footer"><span>EELS 谱峰分析</span><span>数据与计算均保留在本机</span></footer>
   </div>
   <script src="/static/roi_geometry.js"></script>
   <script src="/static/region_fit.js"></script>
+  <script src="/static/workflow_regions.js"></script>
+  <script src="/static/workflow.js"></script>
+  <script src="/static/preferences.js"></script>
   <script src="/static/app.js"></script>
   <dialog id="import-dialog" aria-labelledby="import-title">
     <form id="import-form">
-      <h2 id="import-title">导入数据</h2>
-      <label>本地文件（MAT / HDF5）
-        <input id="import-file" type="file" accept=".mat,.h5,.hdf5">
+      <div class="dialog-heading"><p class="eyebrow">IMPORT DATA</p><h2 id="import-title">导入光谱数据</h2><p>选择 MAT、HDF5 或 EELS-ZEST 结果 ZIP，开始分析。</p></div>
+      <label class="upload-zone">选择本地文件
+        <input id="import-file" type="file" accept=".mat,.h5,.hdf5,.zip">
       </label>
       <label>或填写本地绝对路径
         <input id="import-path" type="text" placeholder="C:\数据目录\result.mat" autocomplete="off">
       </label>
+      <fieldset id="zest-import-options" hidden disabled>
+        <legend>EELS-ZEST 导入</legend>
+        <label>用于后续分析的谱线
+          <select id="zest-signal">
+            <option value="raw_minus_zlp">实测谱 − 零损失峰（保留有符号信号）</option>
+            <option value="vib_only">拟合振动谱（保存的模型）</option>
+            <option value="raw_data">ZEST 输入实测谱（含零损失峰）</option>
+          </select>
+        </label>
+        <label>能量坐标
+          <select id="zest-energy-axis">
+            <option value="raw">保存的原能量轴（不插值）</option>
+            <option value="corrected">逐像素校正轴（公共能窗内线性插值）</option>
+          </select>
+        </label>
+        <p class="import-hint">直接读取 ZIP，无需手动解压。不重跑 ZEST，不裁掉负值，不按像素归一化。原能量轴不会应用逐像素能量修正；校正轴仅在所有有效谱线的公共范围内插值，不外推。</p>
+        <p class="import-hint">空间坐标从导出文件读取。旧 ZIP 若缺少 nm 标定，请在处理程序补全后重新导出；这里不假定像素尺寸。温度误差不用于峰位误差，温度图不作为总计数图。</p>
+      </fieldset>
       <p id="import-message" role="status" aria-live="polite"></p>
       <div class="dialog-actions">
         <button id="import-cancel" type="button">取消</button>
         <button id="import-submit" class="primary-button" type="submit">开始导入</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="workflow-import-dialog" aria-labelledby="workflow-import-title">
+    <form id="workflow-import-form">
+      <div class="dialog-heading"><p class="eyebrow">RESUME WORKFLOW</p><h2 id="workflow-import-title">导入流程 JSON</h2></div>
+      <p>选择已导出的界面工作流（如 try 2-7）。恢复选区、实际运行参数和各区峰结果，然后继续调整。</p>
+      <label class="upload-zone">选择流程文件<input id="workflow-import-file" type="file" accept=".json,application/json" required></label>
+      <label>对应 H5 路径（可选）<input id="workflow-import-data" type="text" placeholder="留空时匹配当前数据或 JSON 记录的原路径" autocomplete="off"></label>
+      <p>JSON 不包含完整谱图。导入会用匹配的 H5 重建分解和体谱，保留已保存的峰位、宽度及振幅，不重新寻峰。H5 已移动时，可填写新路径，或先通过“导入数据”载入。</p>
+      <label class="candidate-toggle"><input id="workflow-import-version" type="checkbox">允许跨版本重建谱图（原保存峰参数不重拟合）</label>
+      <p>不同程序版本重建的谱图可能有差异；只有导入全部成功才替换当前工作流。可通过工作流的“取消”按钮停止导入。</p>
+      <p id="workflow-import-message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="workflow-import-close" type="button">返回</button>
+        <button id="workflow-import-submit" class="primary-button" type="submit">导入并重建谱图</button>
       </div>
     </form>
   </dialog>

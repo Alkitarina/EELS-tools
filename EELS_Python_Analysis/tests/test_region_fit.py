@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
+from eelsfit.runtime_paths import test_runs_dir
 import threading
 import time
 import unittest
@@ -77,7 +78,7 @@ class ContrastFitTests(unittest.TestCase):
 
 class RegionFitApiTests(unittest.TestCase):
     def setUp(self):
-        self.folder = tempfile.TemporaryDirectory(prefix='.tmp_region_fit_api_',dir=Path(__file__).resolve().parents[1])
+        self.folder = tempfile.TemporaryDirectory(prefix='.tmp_region_fit_api_',dir=test_runs_dir())
         self.path = Path(self.folder.name)/'sample.h5'
         write_eels_hdf5(synthetic_reference_data(),self.path)
         self.app = create_app(self.path)

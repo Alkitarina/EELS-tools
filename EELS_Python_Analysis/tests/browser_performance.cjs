@@ -1,10 +1,11 @@
+const {artifactPath} = require('./artifacts.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright');
 
 (async () => {
-  const output = path.resolve(__dirname, '..', '.tmp_bootstrap_performance');
+  const output = artifactPath('.tmp_bootstrap_performance');
   fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {

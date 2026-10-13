@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,11 @@ def load_eels_hdf5(path: str | Path) -> EELSData:
                 for key, value in handle["/intensity"].attrs.items()
             }
         )
+        if "zest_import_json" in attributes:
+            provenance = json.loads(attributes.pop("zest_import_json"))
+            if not isinstance(provenance, dict) or provenance.get("version") != "eels_zest_import_v1":
+                raise ValueError("Unsupported EELS-ZEST import provenance.")
+            attributes["zest_import"] = provenance
         total_counts = None
         if "/reference_maps/total_counts" in handle:
             try:
@@ -149,6 +155,9 @@ def write_eels_hdf5(data: EELSData, path: str | Path) -> None:
             handle.create_dataset(name, data=getattr(data, name))
         handle.attrs["format"] = "eels_python_hdf5_v1"
         handle.attrs["source"] = str(data.source)
+        if "zest_import" in data.attributes:
+            handle.attrs["zest_import_json"] = json.dumps(data.attributes["zest_import"], ensure_ascii=False, allow_nan=False)
+            handle.attrs["original_source"] = data.attributes.get("original_source", str(data.source))
         handle.attrs["reference_maps_schema"] = REFERENCE_MAPS_SCHEMA
         handle.attrs["total_counts_status"] = (
             "available" if data.total_counts is not None

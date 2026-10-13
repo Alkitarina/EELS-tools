@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import json
 import os
 import socket
 import threading
@@ -30,8 +31,19 @@ from eelsfit.core import (
     residual_block_bootstrap,
 )
 from eelsfit.io import EELSData, load_eels_hdf5
+from eelsfit.version import __version__ as APP_VERSION
 from eelsfit.exporting import RESULT_FORMAT, build_result_document, json_text, software_identity
 from eelsfit.importing import prepare_import
+from eelsfit.zest_import import VERSION as ZEST_IMPORT_VERSION, normalize_options as zest_options
+from eelsfit.multivariate import VERSION as WORKFLOW_VERSION, FEATURE_REVISION as WORKFLOW_REVISION
+from eelsfit.workflow_jobs import WorkflowManager
+from eelsfit.workflow_api import register_workflow
+from eelsfit.workflow_import import IMPORT_VERSION as WORKFLOW_IMPORT_VERSION
+from eelsfit.ui_preferences import register_preferences, VERSION as UI_PREFERENCES_VERSION
+from eelsfit.interface_workflow import STRIP_DATA_VERSION
+from eelsfit.interface_localization import LOCALIZATION_RANGE_VERSION
+from eelsfit.workflow_peaks import AMPLITUDE_LIMIT_METHOD, CANDIDATE_SCORE_METHOD
+from eelsfit.runtime_identity import ui_source_id
 from eelsfit.reference_maps import REFERENCE_MAP_VERSION, build_reference_maps
 from eelsfit.region_fit import REGION_FIT_VERSION, FIT_TIMEOUT_SECONDS, run_bounded_fit, validate_thresholds
 from eelsfit.pca import (
@@ -46,6 +58,8 @@ from eelsfit.pca import (
 
 REGIONS = ("Si", "Interface", "Ge")
 RUNTIME_SOFTWARE = software_identity(Path(__file__).resolve().parent)
+# Freeze at import: source edits must not relabel an already running backend.
+RUNTIME_UI_SOURCE_ID = ui_source_id()
 
 from eelsfit.bootstrap_runtime import BOOTSTRAP_ENGINE, DEFAULT_RESAMPLES, INDEPENDENT_SCHEME, MAX_WORKERS, resolve_workers
 
@@ -358,8 +372,9 @@ def _parse_block_size(value: Any) -> int | None:
 class AnalysisService:
     """Own the EELS data and all analysis state for one local server process."""
 
-    def __init__(self, data_path: str | Path | EELSData) -> None:
-        self.data = data_path if isinstance(data_path, EELSData) else load_eels_hdf5(data_path)
+    def __init__(self, data_path: str | Path | EELSData | None = None) -> None:
+        self.data = (data_path if isinstance(data_path, EELSData) else
+                     load_eels_hdf5(data_path) if data_path is not None else None)
         self.dataset_id = uuid.uuid4().hex
         self.request_lock = threading.Lock()
         self.region_fit_lock = threading.Lock()
@@ -372,20 +387,28 @@ class AnalysisService:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="eels-bootstrap")
 
     def shutdown(self) -> None:
+        if hasattr(self, "workflow"):
+            self.workflow.shutdown()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def start_import(self, source: Path, destination: Path) -> BootstrapJob:
+    def start_import(self, source: Path, destination: Path, options=None) -> BootstrapJob:
         job = BootstrapJob(uuid.uuid4().hex, [], 1, analysis_type="import")
         with self._lock:
             self.jobs[job.job_id] = job
-        self._executor.submit(self._import_worker, job, source, destination)
+        self._executor.submit(self._import_worker, job, source, destination, options)
         return job
 
-    def _import_worker(self, job: BootstrapJob, source: Path, destination: Path) -> None:
+    def _import_worker(self, job: BootstrapJob, source: Path, destination: Path, options=None) -> None:
         try:
             with self._lock:
                 job.status = "running"
-            candidate = prepare_import(source, destination)
+            if source.suffix.lower() == ".zip":
+                def progress(completed, total):
+                    with self._lock:
+                        job.completed, job.total = completed, total
+                candidate = prepare_import(source, destination, zest_options=options, progress=progress)
+            else:
+                candidate = prepare_import(source, destination)
             # Commit only a fully validated candidate; failed imports keep old results.
             with self.request_lock, self._lock:
                 self.data = candidate
@@ -394,7 +417,7 @@ class AnalysisService:
                 self.pca_results.clear()
                 self._pca_models.clear()
                 self._reference_maps = None
-                job.completed = 1
+                job.completed = job.total
                 job.status = "done"
         except Exception as error:
             with self._lock:
@@ -414,6 +437,11 @@ class AnalysisService:
         }
 
     def info(self) -> dict[str, Any]:
+        if self.data is None:
+            return {"dataset_id": self.dataset_id, "dataset_loaded": False, "source": None,
+                    "shape": None, "x_nm": None, "y_nm": None, "energy_meV": None,
+                    "zlp_fwhm_meV": None, "default_rois": {},
+                    "reference_maps_version": REFERENCE_MAP_VERSION, "region_fit_version": REGION_FIT_VERSION}
         y_count, x_count, energy_count = self.data.shape
         zlp_fwhm = self.data.attributes.get("zlp_fwhm_meV")
         if isinstance(zlp_fwhm, np.ndarray):
@@ -426,8 +454,10 @@ class AnalysisService:
             zlp_fwhm = float(zlp_fwhm)
         return {
             "dataset_id": self.dataset_id,
+            "dataset_loaded": True,
             "source": str(self.data.source),
             "shape": {"y": y_count, "x": x_count, "energy": energy_count},
+            "input_preparation": self.data.attributes.get("zest_import"),
             "x_nm": [float(self.data.x_nm[0]), float(self.data.x_nm[-1])],
             "y_nm": [float(self.data.y_nm[0]), float(self.data.y_nm[-1])],
             "energy_meV": [
@@ -464,7 +494,7 @@ class AnalysisService:
             "fit_max": upper,
             "x_nm": self.data.x_nm.tolist(),
             "y_nm": self.data.y_nm.tolist(),
-            "values": values.tolist(),
+            "values": [[float(v) if np.isfinite(v) else None for v in row] for row in values],
             "display_min": float(display_min),
             "display_max": float(display_max),
         }
@@ -481,11 +511,16 @@ class AnalysisService:
             self.data.energy_meV <= upper
         )
         cube = self.data.intensity[y_mask][:, x_mask, :]
+        if not np.any(np.isfinite(cube[:, :, energy_mask])):
+            raise RequestValidationError("此 ROI 在所选能窗内没有有效谱线，请选择已计算的像素。")
         spectrum = np.nanmean(cube, axis=(0, 1))
+        pixel_count = int(x_mask.sum() * y_mask.sum())
+        if "zest_import" in self.data.attributes:
+            pixel_count = int(np.count_nonzero(np.all(np.isfinite(cube[:, :, energy_mask]), axis=2)))
         return (
             self.data.energy_meV[energy_mask],
             spectrum[energy_mask],
-            int(x_mask.sum() * y_mask.sum()),
+            pixel_count,
         )
 
     def _extract_pca_cubes(
@@ -500,12 +535,15 @@ class AnalysisService:
         )
         full_cube = self.data.intensity[:, :, energy_mask]
         roi_cube = self.data.intensity[y_mask][:, x_mask, :][:, :, energy_mask]
+        pixel_count = int(x_mask.sum() * y_mask.sum())
+        if "zest_import" in self.data.attributes:
+            pixel_count = int(np.count_nonzero(np.all(np.isfinite(roi_cube), axis=2)))
         return (
             self.data.energy_meV[energy_mask],
             full_cube,
             roi_cube,
             energy_mask,
-            int(x_mask.sum() * y_mask.sum()),
+            pixel_count,
         )
 
     def _cached_pca_model(
@@ -1262,7 +1300,7 @@ def _request_json() -> dict[str, Any]:
     return payload
 
 
-def create_app(data_path: str | Path) -> Flask:
+def create_app(data_path: str | Path | None = None) -> Flask:
     root = Path(__file__).resolve().parent
     app = Flask(
         __name__,
@@ -1271,6 +1309,11 @@ def create_app(data_path: str | Path) -> Flask:
     )
     service = AnalysisService(data_path)
     app.extensions["eels_service"] = service
+    workflow = WorkflowManager(service)
+    service.workflow = workflow
+    app.extensions["eels_workflow"] = workflow
+    register_workflow(app, service, workflow)
+    register_preferences(app, root)
     instance_id = uuid.uuid4().hex
     app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
     app.config["IMPORT_ROOT"] = root / "imports"
@@ -1280,16 +1323,27 @@ def create_app(data_path: str | Path) -> Flask:
     def health():
         with service._lock:
             active_jobs = sum(job.status in {"queued", "running"} for job in service.jobs.values())
-            source = str(service.data.source)
+            source = str(service.data.source) if service.data is not None else None
         return jsonify(
-            status="ok", application="eels-python-analysis", launcher_protocol=1,
+            status="ok", application="eels-python-analysis", app_version=APP_VERSION, launcher_protocol=1,
+            empty_startup_version="deferred_data_v1", dataset_loaded=source is not None,
+            zest_import_version=ZEST_IMPORT_VERSION,
             result_format=RESULT_FORMAT,
             bootstrap_engine=BOOTSTRAP_ENGINE,
             reference_maps_version=REFERENCE_MAP_VERSION,
             region_fit_version=REGION_FIT_VERSION,
+            workflow_version=WORKFLOW_VERSION,
+            workflow_import_version=WORKFLOW_IMPORT_VERSION,
+            workflow_revision=WORKFLOW_REVISION,
+            ui_preferences_version=UI_PREFERENCES_VERSION,
+            strip_data_version=STRIP_DATA_VERSION,
+            localization_range_version=LOCALIZATION_RANGE_VERSION,
+            amplitude_limit_version=AMPLITUDE_LIMIT_METHOD,
+            candidate_score_version=CANDIDATE_SCORE_METHOD,
+            ui_source_id=RUNTIME_UI_SOURCE_ID,
             project_root=str(root), pid=os.getpid(), instance_id=instance_id,
             source=source, active_jobs=active_jobs,
-            busy=active_jobs > 0 or service.request_lock.locked() or service.region_fit_lock.locked(),
+            busy=active_jobs > 0 or workflow.busy or service.request_lock.locked() or service.region_fit_lock.locked(),
         )
 
     @app.before_request
@@ -1301,7 +1355,13 @@ def create_app(data_path: str | Path) -> Flask:
         origin = request.headers.get("Origin")
         if request.method == "POST" and origin and origin != request.host_url.rstrip("/"):
             return jsonify(error="只允许本地页面发起此操作。"), 403
+        if request.path == "/api/ui-preferences":
+            if request.method == "POST" and service.data is None:
+                return jsonify(error="请先导入数据，再保存参数；原参数记忆保持不变。"), 409
+            return None  # UI drafts never mutate the dataset or completed analyses.
         if request.path.startswith("/api/jobs/"):
+            return None
+        if request.path.startswith("/api/workflow/jobs/"):
             return None
         if not service.request_lock.acquire(blocking=False):
             return jsonify(error="服务正在处理另一个请求，请稍后重试。"), 409
@@ -1314,6 +1374,12 @@ def create_app(data_path: str | Path) -> Flask:
         if active and request.path != "/api/info":
             if request.method == "POST" or any(job.analysis_type == "import" for job in active):
                 return jsonify(error="导入或不确定度任务尚未结束，请等待完成。"), 409
+        if workflow.busy and request.method == "POST":
+            return jsonify(error="多变量工作流正在计算，请等待或取消后再修改数据和运行分析。"), 409
+        if service.data is None and request.path not in {
+                "/api/info", "/api/import", "/api/workflow/import", "/api/workflow/state",
+                "/api/results", "/api/pca/results"}:
+            return jsonify(error="尚未导入数据，请先选择 MAT / H5 / EELS-ZEST ZIP 数据或流程 JSON。"), 409
 
     @app.teardown_request
     def release_dataset(_error):
@@ -1329,23 +1395,29 @@ def create_app(data_path: str | Path) -> Flask:
         try:
             folder = Path(app.config["IMPORT_ROOT"]) / uuid.uuid4().hex
             upload = request.files.get("file")
+            options = None
             if upload is not None:
                 name = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-                if Path(name).suffix.lower() not in {".mat", ".h5", ".hdf5"}:
-                    raise ValueError("只支持 .mat、.h5 和 .hdf5 文件。")
+                if Path(name).suffix.lower() not in {".mat", ".h5", ".hdf5", ".zip"}:
+                    raise ValueError("只支持 MAT、HDF5 和 EELS-ZEST ZIP 文件。")
+                if Path(name).suffix.lower() == ".zip":
+                    options = zest_options(json.loads(request.form.get("zest_options", "{}")))
                 folder.mkdir(parents=True)
                 source = folder / name
                 upload.save(source)
             else:
-                path = str(_request_json().get("path", "")).strip().strip('"')
+                payload = _request_json()
+                path = str(payload.get("path", "")).strip().strip('"')
                 if not path:
                     raise ValueError("请选择文件或填写本地绝对路径。")
                 source = Path(path)
                 if not source.is_absolute() or not source.is_file():
                     raise ValueError("请输入存在的本地文件的绝对路径。")
-                if source.suffix.lower() not in {".mat", ".h5", ".hdf5"}:
-                    raise ValueError("只支持 .mat、.h5 和 .hdf5 文件。")
-            job = service.start_import(source, folder / (source.stem + ".h5"))
+                if source.suffix.lower() not in {".mat", ".h5", ".hdf5", ".zip"}:
+                    raise ValueError("只支持 MAT、HDF5 和 EELS-ZEST ZIP 文件。")
+                if source.suffix.lower() == ".zip":
+                    options = zest_options(payload.get("zest_options"))
+            job = service.start_import(source, folder / (source.stem + ".h5"), options)
             return jsonify(job_id=job.job_id, status=job.status)
         except (ValueError, OSError) as error:
             return jsonify(error=str(error)), 400
@@ -1388,7 +1460,15 @@ def create_app(data_path: str | Path) -> Flask:
 
     @app.get("/api/info")
     def info() -> Response:
-        return jsonify({**service.info(), "bootstrap_engine": BOOTSTRAP_ENGINE,
+        return jsonify({**service.info(), "app_version": APP_VERSION, "bootstrap_engine": BOOTSTRAP_ENGINE, "workflow_version": WORKFLOW_VERSION,
+                        "zest_import_version": ZEST_IMPORT_VERSION,
+                        "workflow_import_version": WORKFLOW_IMPORT_VERSION,
+                        "workflow_revision": WORKFLOW_REVISION,
+                        "ui_preferences_version": UI_PREFERENCES_VERSION,
+                        "strip_data_version": STRIP_DATA_VERSION,
+                        "localization_range_version": LOCALIZATION_RANGE_VERSION,
+                        "amplitude_limit_version": AMPLITUDE_LIMIT_METHOD,
+                        "candidate_score_version": CANDIDATE_SCORE_METHOD,
                         "max_workers": MAX_WORKERS})
 
     @app.get("/api/map")
@@ -1566,22 +1646,21 @@ def _port_is_available(port: int) -> bool:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
         description="Serve the local browser-based EELS peak fitting UI."
     )
     parser.add_argument(
         "hdf5_file",
         nargs="?",
-        default=str(root / "2-15-result5.h5"),
-        help="HDF5 file exported by matlab/export_eels_to_hdf5.m",
+        default=None,
+        help="Optional HDF5 file; omit to open an empty UI and import data later.",
     )
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8768)
     parser.add_argument("--open", action="store_true", help="Open the browser automatically.")
     arguments = parser.parse_args()
 
-    data_path = Path(arguments.hdf5_file).expanduser().resolve()
-    if not data_path.is_file():
+    data_path = Path(arguments.hdf5_file).expanduser().resolve() if arguments.hdf5_file else None
+    if data_path is not None and not data_path.is_file():
         parser.error(f"HDF5 data file not found: {data_path}")
     if not 1 <= arguments.port <= 65535:
         parser.error("Port must be between 1 and 65535.")

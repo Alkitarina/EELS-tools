@@ -17,16 +17,19 @@ def matlab_literal(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def prepare_import(source: Path, destination: Path) -> EELSData:
-    """Read HDF5 directly or convert a trusted MAT object using installed MATLAB."""
+def prepare_import(source: Path, destination: Path, *, zest_options=None, progress=None) -> EELSData:
+    """Read HDF5, saved ZEST ZIP, or a trusted MAT object using MATLAB."""
     source = source.expanduser().resolve()
     if not source.is_file():
         raise ValueError(f"找不到数据文件：{source}")
     suffix = source.suffix.lower()
     if suffix in {".h5", ".hdf5"}:
         return load_eels_hdf5(source)
+    if suffix == ".zip":
+        from .zest_import import prepare_zest_import
+        return prepare_zest_import(source, destination, zest_options, progress)
     if suffix != ".mat":
-        raise ValueError("只支持 .mat、.h5 和 .hdf5 文件。")
+        raise ValueError("只支持 .mat、.h5、.hdf5 和 EELS-ZEST .zip 文件。")
     executable = os.environ.get("EELS_MATLAB_PATH") or shutil.which("matlab")
     if not executable:
         candidates = sorted(Path("C:/Program Files/MATLAB").glob("R*/bin/matlab.exe"))

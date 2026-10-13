@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from eelsfit.runtime_paths import test_runs_dir
 import time
 import unittest
 import io
@@ -20,7 +21,7 @@ from eels_web import create_app
 
 class WebApiTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory(prefix=".tmp_test_web_", dir=Path(__file__).resolve().parents[1])
+        self.temp_dir = tempfile.TemporaryDirectory(prefix=".tmp_test_web_", dir=test_runs_dir())
         self.path = Path(self.temp_dir.name) / "synthetic_eels.h5"
         energy = np.linspace(0.0, 100.0, 201)
         x_nm = np.linspace(0.0, 4.0, 5)

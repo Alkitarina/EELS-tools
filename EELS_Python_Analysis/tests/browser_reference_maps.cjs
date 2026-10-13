@@ -1,3 +1,4 @@
+const {artifactPath} = require('./artifacts.cjs');
 // Dedicated ephemeral QA service, never the user's active analysis session.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,7 +9,7 @@ const { chromium } = require('playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
-  const output = fs.mkdtempSync(path.join(root, '.tmp_reference_browser_'));
+  const output = fs.mkdtempSync(artifactPath('.tmp_reference_browser_'));
   const server = spawn(path.join(root, '.venv', 'Scripts', 'python.exe'),
     ['-X', 'utf8', path.join(__dirname, 'browser_reference_maps_server.py'), output],
     { cwd: root, windowsHide: true });
@@ -107,7 +108,7 @@ const { chromium } = require('playwright');
 
     const mobile=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:2});
     await mobile.goto(fixture.url);
-    await mobile.waitForFunction(()=>state.references && state.previews.Si);
+    await mobile.waitForFunction(()=>state.references && state.previews[state.activeRegion]);
     await mobile.selectOption('#map-kind','spectral_contribution');
     await mobile.waitForFunction(()=>state.mapKind==='spectral_contribution');
     assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

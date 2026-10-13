@@ -10,13 +10,14 @@ from werkzeug.serving import make_server
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from eels_web import create_app
+from eelsfit.runtime_paths import test_runs_dir
 from eelsfit.io import write_eels_hdf5
 from tests.test_reference_maps import synthetic_reference_data
 
 
 def main():
     output=Path(sys.argv[1]).resolve()
-    if output.parent!=ROOT or not output.name.startswith('.tmp_reference_browser_'):
+    if output.parent != test_runs_dir() or not output.name.startswith('.tmp_reference_browser_'):
         raise ValueError('Use a task-local fixture directory.')
     data=synthetic_reference_data()
     data.y_nm=np.arange(21,dtype=float)
@@ -29,6 +30,7 @@ def main():
     write_eels_hdf5(data,paths['legacy'])
     app=create_app(paths['counts'])
     app.config['IMPORT_ROOT']=output/'imports'
+    app.config['UI_PREFERENCES_FILE']=output/'ui_preferences.json'
     with make_server('127.0.0.1',0,app,threaded=True) as server:
         print(json.dumps({'url':f'http://127.0.0.1:{server.server_port}','paths':paths}),flush=True)
         try:

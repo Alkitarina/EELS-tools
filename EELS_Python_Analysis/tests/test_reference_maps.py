@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+from eelsfit.runtime_paths import test_runs_dir
 import unittest
 
 import h5py
@@ -65,7 +66,7 @@ class ReferenceMapTests(unittest.TestCase):
         self.assertFalse(result['maps']['band_27_32']['available'])
 
     def test_hdf5_optional_map_roundtrip_and_matlab_square_orientation(self):
-        with tempfile.TemporaryDirectory(prefix='.tmp_reference_io_',dir=Path(__file__).resolve().parents[1]) as folder:
+        with tempfile.TemporaryDirectory(prefix='.tmp_reference_io_',dir=test_runs_dir()) as folder:
             data = synthetic_reference_data()
             path = Path(folder)/'roundtrip.h5'
             write_eels_hdf5(data,path)
@@ -90,7 +91,7 @@ class ReferenceMapTests(unittest.TestCase):
             self.assertIn('total_counts_error',actual.attributes)
 
     def test_declared_total_counts_require_valid_direction_source_and_presence(self):
-        with tempfile.TemporaryDirectory(prefix='.tmp_reference_schema_',dir=Path(__file__).resolve().parents[1]) as folder:
+        with tempfile.TemporaryDirectory(prefix='.tmp_reference_schema_',dir=test_runs_dir()) as folder:
             data = synthetic_reference_data()
             for problem in ('missing_axis','unknown_axis','wrong_source','missing_dataset','complex_values'):
                 with self.subTest(problem=problem):
@@ -126,7 +127,7 @@ class ReferenceMapTests(unittest.TestCase):
             self.assertIn('源 MAT 未保存',load_eels_hdf5(confirmed).attributes['total_counts_error'])
 
     def test_invalid_total_counts_do_not_leave_a_partial_python_export(self):
-        with tempfile.TemporaryDirectory(prefix='.tmp_reference_invalid_',dir=Path(__file__).resolve().parents[1]) as folder:
+        with tempfile.TemporaryDirectory(prefix='.tmp_reference_invalid_',dir=test_runs_dir()) as folder:
             data = synthetic_reference_data()
             for index, counts in enumerate((np.ones((2,3)),np.full(data.shape[:2],np.nan),np.ones(data.shape[:2],complex))):
                 data.total_counts = counts

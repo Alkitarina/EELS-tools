@@ -1,0 +1,171 @@
+<div class="wf-header">
+  <div><p class="eyebrow">INTERFACE WORKFLOW</p><h2>NMF / MCR-ALS 分析</h2></div>
+  <div class="wf-export"><button id="wf-export" type="button">导出流程 JSON</button><button id="wf-arrays" type="button">导出谱图数组 NPZ</button></div>
+</div>
+<nav class="wf-steps" aria-label="工作流步骤">
+  <button type="button" data-wf-step="1" aria-current="step"><b>01</b><span>数据与分解<small>DECOMPOSITION</small></span></button>
+  <button type="button" data-wf-step="2"><b>02</b><span>组分与空间图<small>COMPONENTS</small></span></button>
+  <button type="button" data-wf-step="3"><b>03</b><span>四类分区<small>SPATIAL REGIONS</small></span></button>
+  <button type="button" data-wf-step="4"><b>04</b><span>条带与体谱<small>STRIP PROFILES</small></span></button>
+  <button type="button" data-wf-step="5"><b>05</b><span>体谱与残差分峰<small>PEAK ANALYSIS</small></span></button>
+</nav>
+<div class="wf-jobbar"><progress id="wf-progress" value="0" max="1"></progress><span id="wf-status" role="status" aria-live="polite">先确认输入处理状态和可靠能量窗。</span><button id="wf-cancel" type="button" disabled>取消计算</button></div>
+<p id="wf-feature-note" class="wf-summary" hidden></p>
+
+<section class="wf-step" data-step="1">
+  <h3>在统一能量窗内分解全部像素</h3>
+  <p class="wf-help">输入为已降噪、扣背景的 xyE 数据。展开为 (Nx × Ny) × NE，保留每个像素的空间位置；仅排除含非有限数值的像素。</p>
+  <label class="wf-check"><input id="wf-preprocessed" type="checkbox">我已确认输入完成降噪、扣背景，并已核对下面的可靠能量窗。</label>
+  <div class="wf-fields">
+    <label>起始能量 (meV)<input id="wf-min" type="number" value="10" step=".1"></label>
+    <label>终止能量 (meV)<input id="wf-max" type="number" value="80" step=".1"></label>
+    <label>分解方法<select id="wf-method"><option value="mcr_als">MCR-ALS（保留输入负值）</option><option value="nmf">NMF（非负输入）</option></select></label>
+    <label>组分数<input id="wf-rank" type="number" min="2" max="8" value="3"></label>
+    <label>首个起点<select id="wf-init"><option value="nndsvda">NNDSVDa</option><option value="random">随机非负初始化</option><option value="roi">ROI 平均谱初始化</option></select></label>
+    <label>起点数<input id="wf-starts" type="number" min="1" max="12" value="3"></label>
+    <label>随机种子<input id="wf-seed" type="number" min="0" max="4294967295" value="20260915"></label>
+    <label>迭代上限<input id="wf-iterations" type="number" min="5" max="2000" value="200"></label>
+    <label>相对收敛阈值<input id="wf-tolerance" type="number" min=".000000001" max=".01" step=".00001" value=".00001"></label>
+    <label id="wf-negative-field" hidden>NMF 负值处理<select id="wf-negative"><option value="reject">发现负值时停止</option><option value="clip_for_decomposition">仅分解副本的负值截为 0</option></select></label>
+    <label>每步时间限制 (秒)<input id="wf-timeout" type="number" min="5" max="900" value="180"></label>
+  </div>
+  <div id="wf-seed-panel" hidden>
+    <h4>框选初值 ROI，并预览平均谱</h4>
+    <p class="wf-help">这些选框独立于第 3 步分析选区。可给部分或全部组分指定初值，未指定的组分使用 NNDSVDa；仅首个起点使用 ROI，后续谱形仍自由优化。组分会重新排序，初值编号不代表最终材料标签。</p>
+    <div class="wf-inline">
+      <label>编辑初值<select id="wf-seed-component"></select></label>
+      <label class="wf-check"><input id="wf-seed-enabled" type="checkbox">此组分使用 ROI</label>
+      <label>复制已有分析选区<select id="wf-seed-source"><option value="Si">Si</option><option value="Ge">Ge</option><option value="Interface">普通界面</option><option value="Core">位错核附近</option></select></label>
+      <button id="wf-seed-copy" type="button">复制到当前初值</button>
+    </div>
+    <div class="wf-fields wf-seed-coordinates">
+      <label>x 起点 (nm)<input id="wf-seed-xmin" type="number" step=".01"></label><label>x 终点 (nm)<input id="wf-seed-xmax" type="number" step=".01"></label>
+      <label>y 起点 (nm)<input id="wf-seed-ymin" type="number" step=".01"></label><label>y 终点 (nm)<input id="wf-seed-ymax" type="number" step=".01"></label>
+      <button id="wf-seed-apply" type="button">应用初值坐标</button>
+      <label>ROI 均谱中的负值<select id="wf-seed-negative"><option value="reject">发现负值时停止</option><option value="clip_initial">仅初值截零，保留原数据</option></select></label>
+    </div>
+    <div class="wf-inline"><label>初值底图<select id="wf-seed-background"><option value="integral">统一能窗积分图</option><option value="total_counts">EELS 总计数（非 HAADF）</option></select></label><button id="wf-seed-map-load" type="button">加载 / 更新底图</button><button id="wf-seed-preview" type="button">预览 ROI 平均谱</button></div>
+    <div class="wf-two"><div class="wf-chart"><canvas id="wf-seed-map" tabindex="0" aria-label="初始化 ROI，拖动或调整边界，Esc 取消；不改变分析选区。"></canvas><p id="wf-seed-scale" class="wf-help"></p></div><div class="wf-chart"><canvas id="wf-seed-spectrum"></canvas><div id="wf-seed-legend" class="wf-legend"></div></div></div>
+    <p id="wf-seed-summary" class="wf-summary">初值谱须非负；截零策略仅处理初值，另加最大强度的 10⁻⁸ 正值下限，避免 NMF 零通道无法更新。运行时从已应用的 ROI 重新提取初值。</p>
+  </div>
+  <p class="wf-help">组分谱与空间权重都约束非负。除首个起点外使用独立随机起点，保留重建误差最小者。NMF 的截断只影响分解副本，后续体谱和残差仍用原输入。</p>
+  <div class="wf-actions"><button id="wf-decompose" class="primary-button" type="button">运行全像素分解</button><button type="button" data-wf-next="2">查看组分 →</button></div>
+  <p id="wf-decomp-summary" class="wf-summary"></p>
+</section>
+
+<section class="wf-step" data-step="2" hidden>
+  <h3>谱组分与 xy 空间权重</h3>
+  <p class="wf-help">组分按谱重心排序，谱线统一为单位面积。权重保留强度尺度，不能解释成原子分数；组分不自动对应某种材料或位错。</p>
+  <p id="wf-decomp-warnings" class="wf-summary"></p>
+  <div class="wf-inline"><label>查看组分<select id="wf-component"><option value="0">组分 1</option></select></label><label>参考谱 JSON（仅对照）<input id="wf-reference-file" type="file" accept=".json"></label></div>
+  <p class="wf-help">参考谱格式：{"energy_meV": [...], "intensity": [...], "name": "Si reference"}。仅作形状对照，不进入拟合。</p>
+  <div class="wf-two"><div class="wf-chart"><h4>空间权重</h4><canvas id="wf-component-map"></canvas><p id="wf-component-scale" class="wf-help"></p></div><div class="wf-chart"><h4>组分谱与参考谱</h4><canvas id="wf-component-spectrum"></canvas><div id="wf-component-legend" class="wf-legend"></div></div></div>
+  <div id="wf-trials" class="table-wrap"></div>
+  <div class="wf-actions"><button type="button" data-wf-next="3">结合参考图划分区域 →</button></div>
+</section>
+
+<section class="wf-step" data-step="3" hidden>
+  <h3>确认 Si bulk / Ge bulk / 普通界面 / 位错核附近</h3>
+  <p class="wf-help">先确定总界面选框，再在其中定位候选位错核。普通界面的最终均谱使用“总界面 − 位错核”像素。</p>
+  <details id="wf-contrast-panel" class="wf-details">
+    <summary>① 总计数 + erf / logistic 拟合总界面（可选）</summary>
+    <p class="wf-help">使用保留的 EELS 总计数沿 y 平均；默认总界面为 10–90% 衬度过渡区，上下取满。只预览不会改动选区。</p>
+    <div class="wf-fields">
+      <label>过渡模型<select id="wf-contrast-model"><option value="erf">erf</option><option value="logistic">logistic</option></select></label>
+      <label>Si 体区平台比例 (%)<input id="wf-contrast-si" type="number" min="50.1" max="99.99" step=".1" value="99"></label>
+      <label>总界面起点 (%)<input id="wf-contrast-low" type="number" min=".01" max="49.99" step=".1" value="10"></label>
+      <label>总界面终点 (%)<input id="wf-contrast-high" type="number" min="50.01" max="99.99" step=".1" value="90"></label>
+      <label>Ge 体区平台比例 (%)<input id="wf-contrast-ge" type="number" min="50.1" max="99.99" step=".1" value="99"></label>
+      <label>应用范围<select id="wf-contrast-scope"><option value="interface">仅总界面（保留体区）</option><option value="all">Si / 总界面 / Ge 三个选框</option></select></label>
+    </div>
+    <label class="wf-check"><input id="wf-contrast-full-y" type="checkbox" checked>应用时上下取满 y 范围</label>
+    <div class="wf-actions"><button id="wf-contrast-run" type="button">拟合并预览</button><button id="wf-contrast-cancel" type="button" disabled>取消预览</button><button id="wf-contrast-apply" type="button" disabled>应用拟合选框</button></div>
+    <p id="wf-contrast-status" class="wf-help" role="status">尚未拟合。总计数不等同于 HAADF，过渡比例不等同于成分比例。</p>
+    <div id="wf-contrast-preview" class="wf-chart" hidden><canvas id="wf-contrast-curve"></canvas><div id="wf-contrast-legend" class="wf-legend"></div></div>
+  </details>
+  <details id="wf-local-panel" class="wf-details">
+    <summary>② 界面邻域 NMF / MCR-ALS，预览候选位错核</summary>
+    <p id="wf-local-scope" class="wf-help">以当前总界面选框宽度为基准，默认左右各扩展 100%，总宽度为 300%；y 范围保持不变。沿用全图分解的可靠能量窗。</p>
+    <div class="wf-fields">
+      <label id="wf-local-expand-field">x 两侧各扩展 (%)<input id="wf-local-expand" type="number" min="0" max="1000" step="10" value="100"></label>
+      <label>局部分解方法<select id="wf-local-method"><option value="mcr_als">MCR-ALS</option><option value="nmf">NMF</option></select></label>
+      <label>局部组分数<input id="wf-local-rank" type="number" min="2" max="8" value="3"></label>
+      <label>初始化<select id="wf-local-init"><option value="nndsvda">NNDSVDa</option><option value="random">随机</option></select></label>
+      <label>起点数<input id="wf-local-starts" type="number" min="1" max="12" value="3"></label>
+      <label>迭代上限<input id="wf-local-iterations" type="number" min="5" max="2000" value="200"></label>
+      <label>随机种子<input id="wf-local-seed" type="number" min="0" value="20260916"></label>
+      <label>收敛阈值<input id="wf-local-tolerance" type="number" min=".000000001" max=".01" step=".00001" value=".00001"></label>
+      <label id="wf-local-negative-field" hidden>NMF 负值处理<select id="wf-local-negative"><option value="reject">有负值时报错</option><option value="clip_for_decomposition">仅分解副本截零</option></select></label>
+    </div>
+    <button id="wf-local-run" class="primary-button" type="button">分解局部分析范围</button>
+    <p class="wf-help">局部谱组分用于定位线索，不自动认定为位错核。任务使用第 1 步的计算时限和页面上方的取消按钮。</p>
+    <p id="wf-local-status" class="wf-summary" role="status">局部谱组分用于定位线索，不自动认定为位错核。任务使用页面的计算时限与取消按钮。</p>
+    <div id="wf-local-results" hidden>
+      <div class="wf-inline"><label>预览局部组分<select id="wf-local-component"></select></label></div>
+      <div class="wf-two"><div class="wf-chart"><h4>局部空间权重与候选核框</h4><canvas id="wf-local-map"></canvas><p id="wf-local-scale" class="wf-help"></p><p class="wf-help">橙色虚框：原总界面；紫色：候选位错核。主分区图中的青色虚框表示待分析范围。</p></div><div class="wf-chart"><h4>本次局部分析范围的谱组分</h4><canvas id="wf-local-spectra"></canvas><div id="wf-local-legend" class="wf-legend"></div></div></div>
+      <div class="wf-fields">
+        <label>候选方向<select id="wf-core-direction"><option value="high">高权重区域 ≥ 阈值</option><option value="low">低权重区域 ≤ 阈值</option></select></label>
+        <label>归一化权重阈值 (%)<input id="wf-core-threshold" type="number" min="0" max="100" value="80" step="1"></label>
+        <label>最小连通像素数<input id="wf-core-min-pixels" type="number" min="1" value="2"></label>
+        <label>候选连通区域<select id="wf-core-candidate"><option value="0">请先预览</option></select></label>
+      </div>
+      <div class="wf-actions"><button id="wf-core-preview" type="button">预览候选位错核</button><button id="wf-core-apply" type="button" disabled>应用候选核选框</button></div>
+      <p class="wf-help">归一化权重 = (权重 − 最小值) / (最大值 − 最小值)，阈值不是成分含量或置信度。先选择有空间差异的组分，再核对候选区域及均谱。</p>
+      <p id="wf-core-status" class="wf-help" role="status">阈值相对当前组分权重的最小值与最大值归一化；候选框采用所选连通区域的外接矩形，可继续手动调整。</p>
+      <div id="wf-core-spectra-preview" class="wf-chart" hidden><h4>候选矩形内与其余总界面的实测均谱</h4><canvas id="wf-core-spectra"></canvas><div id="wf-core-legend" class="wf-legend"></div></div>
+    </div>
+  </details>
+  <div class="wf-two wf-region-layout">
+    <div class="wf-chart">
+      <div class="wf-inline"><label>底图<select id="wf-background"><option value="integral">统一能窗积分图</option></select></label><label class="wf-check"><input id="wf-core-enabled" type="checkbox">启用位错核区域</label></div>
+      <canvas id="wf-region-map" tabindex="0" aria-label="四类区域选框，可拖动、调整边界，按 Esc 取消"></canvas>
+      <p id="wf-map-scale" class="wf-help"></p>
+      <p class="wf-help">拖动选框内部移动，边角调整大小，框外重新画框；Esc 取消。切换底图保留所有选框。普通界面会排除位错核像素。</p>
+    </div>
+    <div>
+      <label>当前区域<select id="wf-region"><option value="Si">Si bulk</option><option value="Ge">Ge bulk</option><option value="Interface">总界面（分析时排除位错核）</option><option value="Core">位错核附近</option></select></label>
+      <div class="wf-fields wf-roi-fields"><label>x 起点 (nm)<input id="wf-roi-xmin" type="number" step=".01"></label><label>x 终点 (nm)<input id="wf-roi-xmax" type="number" step=".01"></label><label>y 起点 (nm)<input id="wf-roi-ymin" type="number" step=".01"></label><label>y 终点 (nm)<input id="wf-roi-ymax" type="number" step=".01"></label></div>
+      <button id="wf-roi-apply" type="button">应用坐标</button>
+      <details class="wf-details"><summary>结构像辅助对照（可选）</summary><label>结构图像<input id="wf-structure-file" type="file" accept="image/png,image/jpeg,image/webp"></label><label class="wf-check"><input id="wf-structure-confirmed" type="checkbox">已核对与 EELS 同视场及坐标范围</label><div class="wf-inline"><label class="wf-check"><input id="wf-image-flipx" type="checkbox">水平翻转</label><label class="wf-check"><input id="wf-image-flipy" type="checkbox">垂直翻转</label></div><p class="wf-help">图像映射到当前 xy 范围；此功能不自动完成跨模态配准，需先在外部裁切 / 配准并核对方向。不会将总计数称为 HAADF。</p></details>
+      <label>分区依据（可选备注）<textarea id="wf-region-evidence" rows="3" placeholder="例如：结构像界面、参考谱、组分 2 权重；位错核位置依据…"></textarea></label>
+      <button id="wf-roi-preview" type="button">预览四区实测均谱</button>
+    </div>
+  </div>
+  <div class="wf-chart"><canvas id="wf-roi-spectrum"></canvas><div id="wf-roi-legend" class="wf-legend"></div></div>
+  <div class="wf-actions"><button type="button" data-wf-next="4">设置配准、条带与体谱 →</button></div>
+</section>
+
+<section class="wf-step" data-step="4" hidden>
+  <h3>保留每条带的 x–E 分布，建立两侧体谱</h3>
+  <p id="wf-stripe-scope" class="wf-help">在总界面选框的 y 范围内分条带，每条覆盖完整 x 轴。</p>
+  <div class="wf-fields"><label>条带高度（y 像素行）<input id="wf-stripe-rows" type="number" min="1" value="4"></label><label>扣谱参考体谱<select id="wf-bulk-scope"><option value="global">Si / Ge 整框均谱（所有条带共用）</option><option value="per_strip">每条带与 bulk 框相交（旧规则）</option></select></label><label>体谱模板<select id="wf-template-kind"><option value="mean">已处理数据的区域均谱</option><option value="parametric">参数化线型模板</option></select></label></div>
+  <details id="wf-alignment-details" class="wf-details"><summary>按界面位置配准（可选）</summary><label class="wf-check"><input id="wf-align" type="checkbox">启用 d = x − x0(y) 配准</label><label>界面位置，每行 y_nm, x0_nm<textarea id="wf-anchors" rows="4" placeholder="0, 8.2&#10;5, 8.4&#10;10, 8.6"></textarea></label><p class="wf-help">单个位置点表示直界面；多个点须覆盖本次条带的全部 y 像素行。沿完整 x 轴线性插值，只保留这些行共有的距离范围，不外推。原始区域框、分解和空间图保持不变。</p></details>
+  <div id="wf-template-fields" class="wf-fields" hidden><label>线型<select id="wf-template-shape"><option value="gaussian">Gaussian</option><option value="lorentzian">Lorentzian</option></select></label><label>最多体谱峰数<input id="wf-template-peaks" type="number" min="1" max="8" value="2"></label><label>FWHM 下限 (meV)<input id="wf-template-low" type="number" min=".01" value="1" step=".1"></label><label>FWHM 上限 (meV)<input id="wf-template-high" type="number" min=".01" value="20" step=".1"></label></div>
+  <p id="wf-template-help" class="wf-help">条带实测数据独立生成。Si / Ge 选框仅提取整框平均体谱，不限制条带的 y 范围或完整 x 轴。</p>
+  <div class="wf-actions"><button id="wf-profiles" class="primary-button" type="button">确认分区并建立体谱、逐 x 扣谱</button><button type="button" data-wf-next="5">分析界面残差 →</button></div>
+  <p id="wf-profiles-summary" class="wf-summary"></p>
+  <div class="wf-chart"><h4>两侧体区均谱与实际模板</h4><canvas id="wf-bulk-spectrum"></canvas><div id="wf-bulk-legend" class="wf-legend"></div></div>
+  <div class="wf-inline"><label>条带<select id="wf-strip-view"></select></label><label>x–E 图<select id="wf-strip-kind"><option value="measured">实测谱</option><option value="residual">有符号残差</option><option value="bulk_sum">体谱重建</option></select></label></div>
+  <p class="wf-help"><span class="wf-core-strip-key">紫色 · 涉及位错核</span> 条带与已启用的位错核 y 范围只要共享 1 行原始像素就标记，不检查核区的 x 位置。</p>
+  <div class="wf-chart"><canvas id="wf-strip-map"></canvas><p id="wf-strip-scale" class="wf-help"></p><p id="wf-strip-data-note" class="wf-help" role="status"></p></div>
+</section>
+
+<section class="wf-step" data-step="5" hidden>
+  <h3 id="wf-analysis-title">体区高斯分峰与界面残差分峰</h3>
+  <p id="wf-region-fit-status" class="wf-summary"></p>
+  <div class="wf-fields"><label>分析对象<select id="wf-target"><option value="Si">Si 体区 · 高斯分峰</option><option value="Ge">Ge 体区 · 高斯分峰</option><option value="Interface" selected>普通界面 · 残差分峰</option><option value="Core">位错核附近 · 残差分峰</option><option value="strip">条带中的 x / 距离范围</option></select></label><label class="wf-strip-selection" hidden>条带<select id="wf-target-strip"></select></label><label class="wf-strip-selection" hidden>x / d 起点 (nm)<input id="wf-target-min" type="number" step=".01"></label><label class="wf-strip-selection" hidden>x / d 终点 (nm)<input id="wf-target-max" type="number" step=".01"></label></div>
+  <button id="wf-preview" type="button">预览体谱贡献与残差</button>
+  <p id="wf-analysis-help" class="wf-help">指定区域使用全 y 体区模板；条带目标使用第 4 步选定的体谱范围。</p>
+  <div class="wf-two"><div class="wf-chart"><h4 id="wf-spectrum-title">实测谱与 Si + Ge 贡献</h4><canvas id="wf-subtraction-spectrum"></canvas><div id="wf-subtraction-legend" class="wf-legend"></div></div><div class="wf-chart"><h4 id="wf-components-title">有符号残差与候选线型</h4><canvas id="wf-residual-spectrum"></canvas><div id="wf-residual-legend" class="wf-legend"></div></div></div>
+  <p id="wf-diagnostics" class="wf-summary"></p>
+  <div class="wf-fields"><label>候选峰方向<select id="wf-polarity"><option value="both">正峰 + 负峰</option><option value="positive">仅正峰</option><option value="negative">仅负峰</option></select></label><label>候选峰线型<select id="wf-peak-shape"><option value="gaussian">Gaussian</option><option value="lorentzian">Lorentzian</option></select></label><label>最多候选峰总数<input id="wf-peak-count" type="number" min="1" max="8" value="3"></label><label>最小突出度 (%)<input id="wf-prominence" type="number" min="0" max="99" step=".1" value="3"></label><label>最小峰距 (meV)<input id="wf-distance" type="number" min=".1" step=".1" value="3"></label><label>峰位搜索 ± (meV)<input id="wf-center-radius" type="number" min=".1" step=".1" value="3"></label><label>FWHM 下限 (meV)<input id="wf-peak-low" type="number" min=".01" step=".1" value="1"></label><label>FWHM 上限 (meV)<input id="wf-peak-high" type="number" min=".01" step=".1" value="15"></label><label>手动候选峰位（可选）<input id="wf-centers" type="text" placeholder="留空自动检测，例如 35, 48"></label></div>
+  <div class="wf-fields wf-amplitude-fields"><label class="check-label"><input id="wf-amplitude-enabled" type="checkbox" checked>限制高斯峰高</label><label>邻域实测峰高上限 (%)<input id="wf-amplitude-percent" type="number" min="1" step="5" value="150"></label></div>
+  <p class="wf-summary">仅在已完成分析的能窗内扣体谱、计算残差和拟合误差。峰中心在窗内，高斯尾部允许自然越过边界，但窗外不参与计算。峰高上限取初始候选峰 ± 搜索半径内同号实测信号最大值的指定比例；负峰按谷深计算。Si/Ge 使用原均谱，Interface/Core 使用固定 NNLS 扣谱残差，两阶段和联合拟合共用该上限。</p>
+  <p id="wf-fit-policy" class="wf-summary"></p>
+  <p id="wf-candidate-policy" class="wf-help"></p>
+  <p id="wf-amplitude-unsupported" class="wf-summary" hidden>当前服务尚未加载峰高约束后端，不能使用此功能。请通过 start_web.ps1 更新至新版 8765 服务。</p>
+  <div class="wf-actions"><button id="wf-fit" class="primary-button" type="button">提取候选峰并交叉拟合</button><button id="wf-fit-regions" type="button">按各区参数拟合全部区域</button></div>
+  <p class="wf-help">切换分析对象保留各区参数和已完成结果。导出 JSON 汇总 Si / Ge 体谱分峰、普通界面 / 位错核残差分峰；未拟合与未启用区域会注明状态。</p>
+  <p id="wf-residual-help" class="wf-help">残差保留正负值。两步法和联合拟合中的 Si/Ge 体谱系数均非负、不要求和为 1；候选峰可有负振幅、负面积。正负模式下，手动峰位按该处残差判定方向；联合拟合保持相同方向。负峰可能表示谱权重减弱，也可能由峰移、展宽或模板不匹配造成。较低 SSE 本身不能证明独立界面模；尚未计算峰参数误差。</p>
+  <div id="wf-fit-table" class="table-wrap"></div><p id="wf-comparison" class="wf-summary"></p>
+</section>

@@ -12,11 +12,12 @@ from werkzeug.serving import make_server
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from eels_web import create_app
+from eelsfit.runtime_paths import test_runs_dir
 
 
 def main() -> None:
     output = Path(sys.argv[1]).resolve()
-    if output.parent != ROOT or not output.name.startswith(".tmp_import_settings_"):
+    if output.parent != test_runs_dir() or not output.name.startswith(".tmp_import_settings_"):
         raise ValueError("Use a task-local fixture directory.")
     energy = np.linspace(-20, 150, 341)
     x = np.arange(11, dtype=float)
@@ -48,6 +49,7 @@ def main() -> None:
         pass
     app = create_app(paths["initial"])
     app.config["IMPORT_ROOT"] = output / "imports"
+    app.config["UI_PREFERENCES_FILE"] = output / "ui_preferences.json"
     with make_server("127.0.0.1", 0, app, threaded=True) as server:
         print(json.dumps({"url": f"http://127.0.0.1:{server.server_port}", "paths": paths}), flush=True)
         try:

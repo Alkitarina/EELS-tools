@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$DataFile = "",
-    [ValidateRange(1, 65535)][int]$Port = 8765,
-    [ValidateRange(1, 30)][int]$MaxPortScan = 10,
+    [ValidateRange(1, 65535)][int]$Port = 8768,
+    # Retained for old shortcuts only. Port scanning is intentionally disabled.
+    [ValidateRange(1, 30)][int]$MaxPortScan = 1,
     [ValidateRange(3, 600)][int]$StartupTimeoutSeconds = 60,
     [string]$LogDir = "",
     [switch]$NoBrowser
@@ -14,16 +15,35 @@ $projectRoot = $PSScriptRoot
 $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $server = Join-Path $projectRoot "eels_web.py"
 $explicitData = -not [string]::IsNullOrWhiteSpace($DataFile)
-if (-not $explicitData) { $DataFile = "2-15-result5.h5" }
-if (-not [System.IO.Path]::IsPathRooted($DataFile)) {
-    $DataFile = Join-Path $projectRoot $DataFile
+if ($explicitData) {
+    if (-not [System.IO.Path]::IsPathRooted($DataFile)) {
+        $DataFile = Join-Path $projectRoot $DataFile
+    }
+    $DataFile = [System.IO.Path]::GetFullPath($DataFile)
+    if (-not (Test-Path -LiteralPath $DataFile -PathType Leaf)) {
+        throw "Data file not found: $DataFile"
+    }
+    if ([System.IO.Path]::GetExtension($DataFile).ToLowerInvariant() -notin @(".h5", ".hdf5")) {
+        throw "Startup DataFile must be HDF5. Import toolbox MAT files from the web page."
+    }
 }
-$DataFile = [System.IO.Path]::GetFullPath($DataFile)
-if ($explicitData -and -not (Test-Path -LiteralPath $DataFile -PathType Leaf)) {
-    throw "Data file not found: $DataFile"
+if (-not $LogDir) { $LogDir = Join-Path $projectRoot "web_runs" }
+elseif (-not [System.IO.Path]::IsPathRooted($LogDir)) { $LogDir = Join-Path $projectRoot $LogDir }
+$LogDir = [System.IO.Path]::GetFullPath($LogDir)
+$stateFile = Join-Path $LogDir "last_launch.json"
+if ($PSBoundParameters.ContainsKey("MaxPortScan")) {
+    Write-Warning "-MaxPortScan is ignored. EELS stays on the requested port (default 8768)."
 }
-if ([System.IO.Path]::GetExtension($DataFile).ToLowerInvariant() -notin @(".h5", ".hdf5")) {
-    throw "Startup DataFile must be HDF5. Import toolbox MAT files from the web page."
+
+function Read-CurrentSourceId {
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw "Missing .venv. Create the project Python environment first."
+    }
+    $identity = & $python -X utf8 (Join-Path $projectRoot "eelsfit\runtime_identity.py")
+    if ($LASTEXITCODE -ne 0 -or $identity -notmatch "^[a-f0-9]{64}$") {
+        throw "Cannot verify the current UI source. No existing server was changed."
+    }
+    return [string]$identity
 }
 
 $mutex = [System.Threading.Mutex]::new($false, "Local\EELSPythonAnalysisWebStart")
@@ -38,32 +58,37 @@ try {
     catch [System.Threading.AbandonedMutexException] { $locked = $true }
     if (-not $locked) { throw "Another EELS launcher is still starting. Retry shortly." }
 
-    $lastPort = [Math]::Min(65535, $Port + $MaxPortScan - 1)
-    for ($selectedPort = $Port; $selectedPort -le $lastPort; $selectedPort++) {
-        if (Test-EelsPortInUse $selectedPort) {
-            $health = Get-EelsHealth $selectedPort
-            if ((Test-EelsHealth $health $projectRoot) -and $health.result_format -eq "eels_peak_results_v1" -and $health.bootstrap_engine -eq "cpu_parallel_v1" -and $health.reference_maps_version -eq "reference_maps_v1" -and $health.region_fit_version -eq "contrast_region_fit_v1" -and
-                (-not $explicitData -or $health.source -ieq $DataFile)) {
-                $ready = $true
-                Write-Output "[start_web] Reusing existing EELS server; current data and results are preserved."
-                break
+    $selectedPort = $Port
+    while (-not $ready) {
+        # The public UI never silently moves to a different port.
+        if (Test-EelsPortInUse $Port) {
+            $health = Get-EelsHealth $Port
+            if (-not (Test-EelsHealth $health $projectRoot)) {
+                throw "Port $Port is occupied by another application. Release that port and retry; no alternate port was started and nothing was stopped."
             }
-            Write-Output "[start_web] Port $selectedPort is occupied or serves different data; trying the next port."
-            continue
+            $expectedSourceId = Read-CurrentSourceId
+            if (-not (Test-EelsCompatibleHealth $health $projectRoot $expectedSourceId)) {
+                throw "Port $Port has an older EELS backend. Preserve/export its results, then run .\stop_web.ps1 -Port $Port and .\start_web.ps1 -Port $Port. The latest UI stays on $Port; the existing session was left running."
+            }
+            if ($explicitData -and $health.source -ine $DataFile) {
+                throw "Port $Port already serves different data. Import the requested file in that UI, or export results and stop it before restarting on $Port. The existing data and results were preserved."
+            }
+            $ready = $true
+            Write-Output "[start_web] Reusing existing EELS server; current data and results are preserved."
         }
-        if (-not (Test-Path -LiteralPath $DataFile -PathType Leaf)) {
-            throw "Data file not found: $DataFile. Pass -DataFile with an existing HDF5 file."
-        }
+        if ($ready) { break }
         if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
             throw "Missing .venv. Run: py -3.12 -m venv .venv; then .\.venv\Scripts\python.exe -m pip install -r requirements.txt"
         }
-        if (-not $LogDir) { $LogDir = Join-Path $projectRoot "web_runs" }
-        elseif (-not [System.IO.Path]::IsPathRooted($LogDir)) { $LogDir = Join-Path $projectRoot $LogDir }
+        # A fresh launch is empty unless the caller explicitly supplies -DataFile.
+        # Never consult startup history, a legacy H5, or a file picker here.
+        $expectedSourceId = Read-CurrentSourceId
         [System.IO.Directory]::CreateDirectory($logDir) | Out-Null
         $stamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
         $stdoutLog = Join-Path $logDir "web_server.$stamp.stdout.log"
         $stderrLog = Join-Path $logDir "web_server.$stamp.stderr.log"
-        $arguments = "-X utf8 -u `"$server`" `"$DataFile`" --port $selectedPort"
+        $arguments = "-X utf8 -u `"$server`" --port $selectedPort"
+        if ($explicitData) { $arguments += " `"$DataFile`"" }
         $oldEncoding = $env:PYTHONIOENCODING
         try {
             $env:PYTHONIOENCODING = "utf-8"
@@ -76,7 +101,8 @@ try {
         while ($watch.Elapsed.TotalSeconds -lt $StartupTimeoutSeconds) {
             if ($process.HasExited) { break }
             $health = Get-EelsHealth $selectedPort
-            if ((Test-EelsHealth $health $projectRoot) -and $health.result_format -eq "eels_peak_results_v1" -and $health.bootstrap_engine -eq "cpu_parallel_v1" -and $health.reference_maps_version -eq "reference_maps_v1" -and $health.region_fit_version -eq "contrast_region_fit_v1" -and $health.source -ieq $DataFile) {
+            $dataMatches = if ($explicitData) { $health.source -ieq $DataFile } else { $null -eq $health.source }
+            if ((Test-EelsCompatibleHealth $health $projectRoot $expectedSourceId) -and $dataMatches) {
                 $ready = $true
                 break
             }
@@ -88,10 +114,12 @@ try {
         } else { "" }
         throw "EELS startup failed or timed out. Log: $stderrLog`n$details"
     }
-    if (-not $ready) { throw "No usable port in $Port..$lastPort. Try -Port with another number." }
+    if (-not $ready) { throw "EELS could not start on its fixed port $Port." }
+    if ($health.source) { Save-EelsStartupData $stateFile $projectRoot $health.source }
     $url = "http://127.0.0.1:$selectedPort"
     Write-Output "[start_web] Ready: $url"
-    Write-Output "[start_web] Data: $($health.source)"
+    if ($health.source) { Write-Output "[start_web] Data: $($health.source)" }
+    else { Write-Output "[start_web] No data loaded. Import MAT/H5 or workflow JSON in the browser." }
     Write-Output "[start_web] Server PID: $($health.pid)"
     if ($stdoutLog) { Write-Output "[start_web] Logs: $stdoutLog, $stderrLog" }
     Write-Output "[start_web] The server stays running after this terminal closes."

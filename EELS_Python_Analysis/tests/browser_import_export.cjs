@@ -1,3 +1,4 @@
+const {artifactPath} = require('./artifacts.cjs');
 // Run against an idle local test server; this switches its active data.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -6,7 +7,7 @@ const { chromium } = require('playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
-  const output = fs.mkdtempSync(path.join(root, '.tmp_browser_import_export_'));
+  const output = fs.mkdtempSync(artifactPath('.tmp_browser_import_export_'));
   assert(process.argv[2], 'Pass a trusted MAT sample path.');
   const sample = path.resolve(process.argv[2]);
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
@@ -15,7 +16,9 @@ const { chromium } = require('playwright');
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   try {
-    await page.goto(process.env.EELS_TEST_URL || 'http://127.0.0.1:8765');
+    assert(process.env.EELS_TEST_URL, 'Set EELS_TEST_URL to an isolated QA server.');
+    assert.notEqual(new URL(process.env.EELS_TEST_URL).port, '8765', 'Never import test data into the daily UI.');
+    await page.goto(process.env.EELS_TEST_URL);
     await page.locator('#status').filter({ hasText: '预览已更新' }).waitFor();
     await page.click('#import-data');
     await page.fill('#import-path', sample);
